@@ -1,148 +1,207 @@
 import { useState } from "react";
 
-const initialTransactions = [
-  {
-    transaction_id: 1,
-    transaction_type: "Rental Payment",
-    amount: 150,
-    status: "Paid",
-    transaction_date: "2025-11-01",
-    student_name: "Juan Dela Cruz",
-    payment_method: "Cash",
-    payment_reference_id: "TRX001",
-  },
-  {
-    transaction_id: 2,
-    transaction_type: "Damage Fee",
-    amount: 200,
-    status: "Unpaid",
-    transaction_date: "2025-11-02",
-    student_name: "Maria Santos",
-    payment_method: "Online",
-    payment_reference_id: "-",
-  },
-  {
-    transaction_id: 3,
-    transaction_type: "Extension Fee",
-    amount: 50,
-    status: "Paid",
-    transaction_date: "2025-11-01",
-    student_name: "John Lim",
-    payment_method: "Cash",
-    payment_reference_id: "TRX002",
-  },
-];
-
 export default function Transactions() {
-  const [transactions, setTransactions] = useState(initialTransactions);
+  // --- Mock Transaction Data (Replace with Supabase fetch later) ---
+  const [transactions, setTransactions] = useState([
+    {
+      id: 1,
+      rental_id: 1001,
+      student_name: "John Doe",
+      type: "Damage Fine",
+      amount: 250,
+      status: "Paid",
+      date: "2025-11-01",
+      notes: "Broken Arduino pin",
+    },
+    {
+      id: 2,
+      rental_id: 1003,
+      student_name: "Mike Johnson",
+      type: "Lost Fine",
+      amount: 500,
+      status: "Unpaid",
+      date: "2025-11-03",
+      notes: "Lost multimeter",
+    },
+    {
+      id: 3,
+      rental_id: 1004,
+      student_name: "Lisa Brown",
+      type: "Late Fine",
+      amount: 100,
+      status: "Paid",
+      date: "2025-10-29",
+      notes: "Returned 2 days late",
+    },
+    {
+      id: 4,
+      rental_id: 1005,
+      student_name: "Alex Lee",
+      type: "Damage Fine",
+      amount: 300,
+      status: "Unpaid",
+      date: "2025-11-02",
+      notes: "Cracked case on ESP32",
+    },
+  ]);
+
+  const [filter, setFilter] = useState("");
+  const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
-  const [modal, setModal] = useState(null);
 
+  // --- Stats for Summary Cards ---
+  const totalFines = transactions.length;
+  const totalPaid = transactions.filter((t) => t.status === "Paid").length;
+  const totalUnpaid = transactions.filter((t) => t.status === "Unpaid").length;
+  const totalCollected = transactions
+    .filter((t) => t.status === "Paid")
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  const stats = [
+    { title: "Total Fines", value: totalFines },
+    { title: "Paid", value: totalPaid },
+    { title: "Unpaid", value: totalUnpaid },
+    { title: "Collected (₱)", value: totalCollected },
+  ];
+
+  // --- Filtering & Search ---
+  const filteredTransactions = transactions.filter((t) => {
+    const matchFilter = filter ? t.status === filter : true;
+    const matchSearch = search
+      ? t.student_name.toLowerCase().includes(search.toLowerCase()) ||
+        t.type.toLowerCase().includes(search.toLowerCase())
+      : true;
+    return matchFilter && matchSearch;
+  });
+
+  // --- Mark Payment Handler ---
   const handleMarkPaid = (id) => {
-    setTransactions(transactions.map(t =>
-      t.transaction_id === id ? { ...t, status: "Paid" } : t
-    ));
-    setModal(null);
-  };
-
-  const handleNewTransaction = () => {
-    setModal("addTransaction");
-  };
-
-  const handleAddTransaction = (newTxn) => {
-    const newEntry = {
-      transaction_id: transactions.length + 1,
-      transaction_date: new Date().toISOString().split("T")[0],
-      ...newTxn,
-    };
-    setTransactions([...transactions, newEntry]);
-    setModal(null);
+    setTransactions((prev) =>
+      prev.map((t) =>
+        t.id === id ? { ...t, status: "Paid" } : t
+      )
+    );
   };
 
   return (
-    <div className="text-white">
-      <div className="flex justify-between items-center mb-6">
+    <div className="space-y-8 text-white">
+      {/* ---------- HEADER ---------- */}
+      <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold">Transactions</h1>
-        <button
-          onClick={handleNewTransaction}
-          className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded"
-        >
-          + New Transaction
-        </button>
+        <p className="text-sm text-gray-400">
+          Manage all fines and payment records.
+        </p>
       </div>
 
-      <div className="bg-gray-900 p-4 rounded-lg shadow">
+      {/* ---------- STATS ---------- */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {stats.map((s) => (
+          <SummaryCard key={s.title} title={s.title} value={s.value} />
+        ))}
+      </div>
+
+      {/* ---------- FILTERS ---------- */}
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="Search by student or type"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="bg-gray-800 rounded px-3 py-2 text-sm focus:outline-none w-60"
+          />
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="bg-gray-800 rounded px-3 py-2 text-sm"
+          >
+            <option value="">All</option>
+            <option value="Paid">Paid</option>
+            <option value="Unpaid">Unpaid</option>
+          </select>
+        </div>
+      </div>
+
+      {/* ---------- TRANSACTIONS TABLE ---------- */}
+      <section className="bg-gray-900 rounded-xl p-6 shadow-lg">
         <Table
-          headers={[
-            "Transaction ID",
-            "Type",
-            "Amount",
-            "Status",
-            "Date",
-            "Student",
-            "Payment Method",
-            "Reference ID",
-            "Actions",
-          ]}
-          rows={transactions.map(t => [
-            t.transaction_id,
-            t.transaction_type,
-            `₱${t.amount}`,
-            <StatusBadge status={t.status} key={t.transaction_id} />,
-            t.transaction_date,
+          headers={["ID", "Student", "Type", "Amount", "Status", "Date", "Actions"]}
+          rows={filteredTransactions.map((t) => [
+            t.id,
             t.student_name,
-            t.payment_method,
-            t.payment_reference_id,
-            <div className="space-x-2" key={`btn-${t.transaction_id}`}>
+            t.type,
+            `₱${t.amount}`,
+            <StatusBadge status={t.status} key={t.id} />,
+            t.date,
+            <div key={t.id} className="flex gap-2">
               {t.status === "Unpaid" && (
-                <Button
-                  color="blue"
-                  label="Mark as Paid"
-                  onClick={() => {
-                    setSelected(t);
-                    setModal("markPaid");
-                  }}
-                />
+                <button
+                  onClick={() => handleMarkPaid(t.id)}
+                  className="text-green-400 hover:underline"
+                >
+                  Mark Paid
+                </button>
               )}
+              <button
+                onClick={() => setSelected(t)}
+                className="text-blue-400 hover:underline"
+              >
+                View
+              </button>
             </div>,
           ])}
         />
-      </div>
+      </section>
 
-      {/* MARK AS PAID MODAL */}
-      {modal === "markPaid" && selected && (
-        <Modal title="Mark Transaction as Paid" onClose={() => setModal(null)}>
-          <p>
-            Mark <b>{selected.student_name}</b>’s <b>{selected.transaction_type}</b> as paid?
-          </p>
-          <ActionRow
-            onCancel={() => setModal(null)}
-            onConfirm={() => handleMarkPaid(selected.transaction_id)}
-            confirmLabel="Mark Paid"
-            confirmColor="blue"
-          />
+      {/* ---------- TRANSACTION DETAILS MODAL ---------- */}
+      {selected && (
+        <Modal title={`Transaction #${selected.id}`} onClose={() => setSelected(null)}>
+          <div className="space-y-2 text-sm">
+            <p><b>Student:</b> {selected.student_name}</p>
+            <p><b>Rental ID:</b> {selected.rental_id}</p>
+            <p><b>Type:</b> {selected.type}</p>
+            <p><b>Amount:</b> ₱{selected.amount}</p>
+            <p><b>Status:</b> <StatusBadge status={selected.status} /></p>
+            <p><b>Date:</b> {selected.date}</p>
+            <p><b>Notes:</b> {selected.notes}</p>
+
+            {selected.status === "Unpaid" && (
+              <div className="flex justify-end mt-4">
+                <button
+                  onClick={() => {
+                    handleMarkPaid(selected.id);
+                    setSelected(null);
+                  }}
+                  className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm"
+                >
+                  Mark as Paid
+                </button>
+              </div>
+            )}
+          </div>
         </Modal>
-      )}
-
-      {/* ADD TRANSACTION MODAL */}
-      {modal === "addTransaction" && (
-        <AddTransactionModal
-          onAdd={handleAddTransaction}
-          onClose={() => setModal(null)}
-        />
       )}
     </div>
   );
 }
 
-/* Helper Components */
+/* ---------- UI COMPONENTS ---------- */
+function SummaryCard({ title, value }) {
+  return (
+    <div className="bg-gray-800 rounded-xl p-4 shadow-md text-center">
+      <p className="text-sm text-gray-400">{title}</p>
+      <h3 className="text-2xl font-bold">{value}</h3>
+    </div>
+  );
+}
+
 function Table({ headers, rows }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left border-collapse">
         <thead>
           <tr className="border-b border-gray-700">
-            {headers.map(h => (
+            {headers.map((h) => (
               <th key={h} className="py-2 px-3 text-sm font-semibold text-gray-300">
                 {h}
               </th>
@@ -153,12 +212,12 @@ function Table({ headers, rows }) {
           {rows.length === 0 ? (
             <tr>
               <td colSpan={headers.length} className="text-center py-3 text-gray-500">
-                No transactions
+                No transactions found
               </td>
             </tr>
           ) : (
             rows.map((r, i) => (
-              <tr key={i} className="border-b border-gray-800 hover:bg-gray-800">
+              <tr key={i} className="border-b border-gray-800 hover:bg-gray-800/40">
                 {r.map((cell, j) => (
                   <td key={j} className="py-2 px-3 text-sm">
                     {cell}
@@ -173,17 +232,14 @@ function Table({ headers, rows }) {
   );
 }
 
-function Button({ color, label, onClick }) {
-  const colors = {
-    blue: "bg-blue-600 hover:bg-blue-700",
-    green: "bg-green-600 hover:bg-green-700",
-    red: "bg-red-600 hover:bg-red-700",
-  };
-  return (
-    <button onClick={onClick} className={`px-3 py-1 rounded text-sm ${colors[color]}`}>
-      {label}
-    </button>
-  );
+function StatusBadge({ status }) {
+  const color =
+    status === "Paid"
+      ? "bg-green-600"
+      : status === "Unpaid"
+      ? "bg-red-600"
+      : "bg-gray-600";
+  return <span className={`px-2 py-1 rounded text-xs ${color}`}>{status}</span>;
 }
 
 function Modal({ title, children, onClose }) {
@@ -200,119 +256,5 @@ function Modal({ title, children, onClose }) {
         </button>
       </div>
     </div>
-  );
-}
-
-function ActionRow({ onCancel, onConfirm, confirmLabel, confirmColor }) {
-  const colors = {
-    blue: "bg-blue-600 hover:bg-blue-700",
-    green: "bg-green-600 hover:bg-green-700",
-    red: "bg-red-600 hover:bg-red-700",
-  };
-  return (
-    <div className="mt-4 flex justify-end gap-2">
-      <button onClick={onCancel} className="px-3 py-1 bg-gray-700 rounded">
-        Cancel
-      </button>
-      <button onClick={onConfirm} className={`px-3 py-1 rounded ${colors[confirmColor]}`}>
-        {confirmLabel}
-      </button>
-    </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const color =
-    status === "Paid"
-      ? "bg-green-600"
-      : status === "Unpaid"
-      ? "bg-red-600"
-      : "bg-gray-700";
-  return (
-    <span className={`px-2 py-1 rounded text-xs ${color}`}>{status}</span>
-  );
-}
-
-/* --- Add Transaction Modal --- */
-function AddTransactionModal({ onAdd, onClose }) {
-  const [transaction_type, setType] = useState("Rental Payment");
-  const [student_name, setStudent] = useState("");
-  const [amount, setAmount] = useState("");
-  const [payment_method, setMethod] = useState("Cash");
-
-  const handleSubmit = () => {
-    if (!student_name || !amount) return alert("Please fill all fields");
-    onAdd({
-      transaction_type,
-      student_name,
-      amount: Number(amount),
-      status: "Unpaid",
-      payment_method,
-      payment_reference_id: "-",
-    });
-  };
-
-  return (
-    <Modal title="Add New Transaction" onClose={onClose}>
-      <div className="space-y-3">
-        <div>
-          <label className="text-sm text-gray-400">Type:</label>
-          <select
-            value={transaction_type}
-            onChange={(e) => setType(e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          >
-            <option>Rental Payment</option>
-            <option>Extension Fee</option>
-            <option>Damage Fee</option>
-            <option>Lost Fee</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Student Name:</label>
-          <input
-            type="text"
-            value={student_name}
-            onChange={(e) => setStudent(e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Amount (₱):</label>
-          <input
-            type="number"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Payment Method:</label>
-          <select
-            value={payment_method}
-            onChange={(e) => setMethod(e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          >
-            <option>Cash</option>
-            <option>Online</option>
-          </select>
-        </div>
-
-        <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1 bg-gray-700 rounded">
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded"
-          >
-            Add Transaction
-          </button>
-        </div>
-      </div>
-    </Modal>
   );
 }

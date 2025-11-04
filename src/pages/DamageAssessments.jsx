@@ -1,113 +1,231 @@
 import { useState } from "react";
 
-const initialAssessments = [
-  {
-    assessment_id: 1,
-    rental_id: 1005,
-    initial_notes: "Cracked sensor casing",
-    date_logged: "2025-10-28",
-    final_notes: "",
-    fine_amount: 200,
-    status: "With Fine",
-  },
-  {
-    assessment_id: 2,
-    rental_id: 1008,
-    initial_notes: "Minor scratches, still functional",
-    date_logged: "2025-10-20",
-    final_notes: "No fee applied",
-    fine_amount: 0,
-    status: "Cleared",
-  },
-];
-
 export default function DamageAssessments() {
-  const [assessments, setAssessments] = useState(initialAssessments);
-  const [modal, setModal] = useState(null);
+  const [assessments, setAssessments] = useState([
+    {
+      id: 1,
+      rental_id: 1001,
+      student_name: "John Doe",
+      gadget_name: "Arduino Uno",
+      serial: "SN-A001",
+      issue: "Broken pin and casing",
+      condition: "Damaged",
+      date_reported: "2025-11-01",
+      fine_amount: 250,
+      status: "Pending",
+    },
+    {
+      id: 2,
+      rental_id: 1003,
+      student_name: "Mike Johnson",
+      gadget_name: "Digital Multimeter",
+      serial: "SN-M020",
+      issue: "Lost item - not returned",
+      condition: "Lost",
+      date_reported: "2025-11-03",
+      fine_amount: 500,
+      status: "Resolved",
+    },
+    {
+      id: 3,
+      rental_id: 1005,
+      student_name: "Alex Lee",
+      gadget_name: "ESP32 Dev Board",
+      serial: "SN-E003",
+      issue: "Cracked board, short circuit",
+      condition: "Damaged",
+      date_reported: "2025-11-02",
+      fine_amount: 300,
+      status: "Pending",
+    },
+  ]);
+
+  const [filter, setFilter] = useState("");
+  const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
 
-  const handleAdd = (a) => {
-    const entry = {
-      assessment_id: assessments.length + 1,
-      date_logged: new Date().toISOString().slice(0, 10),
-      ...a,
-    };
-    setAssessments([...assessments, entry]);
-    setModal(null);
-  };
+  // --- Stats ---
+  const total = assessments.length;
+  const pending = assessments.filter((a) => a.status === "Pending").length;
+  const resolved = assessments.filter((a) => a.status === "Resolved").length;
+  const totalFines = assessments.reduce((sum, a) => sum + a.fine_amount, 0);
 
-  const handleUpdate = (updated) => {
-    setAssessments(
-      assessments.map((a) =>
-        a.assessment_id === updated.assessment_id ? updated : a
+  const stats = [
+    { title: "Total Reports", value: total },
+    { title: "Pending", value: pending },
+    { title: "Resolved", value: resolved },
+    { title: "Total Fines (₱)", value: totalFines },
+  ];
+
+  // --- Filters ---
+  const filteredAssessments = assessments.filter((a) => {
+    const matchFilter = filter ? a.status === filter : true;
+    const matchSearch = search
+      ? a.student_name.toLowerCase().includes(search.toLowerCase()) ||
+        a.gadget_name.toLowerCase().includes(search.toLowerCase()) ||
+        a.serial.toLowerCase().includes(search.toLowerCase())
+      : true;
+    return matchFilter && matchSearch;
+  });
+
+  // --- Actions ---
+  const markResolved = (id) => {
+    setAssessments((prev) =>
+      prev.map((a) =>
+        a.id === id ? { ...a, status: "Resolved" } : a
       )
     );
-    setModal(null);
+  };
+
+  const createFine = (assessment) => {
+    alert(`Fine created for ${assessment.student_name}: ₱${assessment.fine_amount}`);
+    markResolved(assessment.id);
   };
 
   return (
-    <div className="text-white">
-      <div className="flex justify-between items-center mb-6">
+    <div className="space-y-8 text-white">
+      {/* ---------- HEADER ---------- */}
+      <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold">Damage Assessments</h1>
-        <button
-          onClick={() => setModal("add")}
-          className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded"
-        >
-          + Log Damage
-        </button>
+        <p className="text-sm text-gray-400">
+          Review and manage all damaged or lost gadget reports.
+        </p>
       </div>
 
-      <div className="bg-gray-900 p-4 rounded-lg shadow">
+      {/* ---------- STATS ---------- */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {stats.map((s) => (
+          <SummaryCard key={s.title} title={s.title} value={s.value} />
+        ))}
+      </div>
+
+      {/* ---------- FILTERS ---------- */}
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="Search by student, gadget, or serial"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="bg-gray-800 rounded px-3 py-2 text-sm focus:outline-none w-60"
+          />
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="bg-gray-800 rounded px-3 py-2 text-sm"
+          >
+            <option value="">All</option>
+            <option value="Pending">Pending</option>
+            <option value="Resolved">Resolved</option>
+          </select>
+        </div>
+      </div>
+
+      {/* ---------- TABLE ---------- */}
+      <section className="bg-gray-900 rounded-xl p-6 shadow-lg">
         <Table
           headers={[
-            "Assessment ID",
-            "Rental ID",
-            "Date Logged",
-            "Initial Notes",
+            "ID",
+            "Student",
+            "Gadget",
+            "Serial",
+            "Condition",
+            "Date Reported",
             "Fine (₱)",
             "Status",
             "Actions",
           ]}
-          rows={assessments.map((a) => [
-            a.assessment_id,
-            a.rental_id,
-            a.date_logged,
-            a.initial_notes,
-            a.fine_amount > 0 ? `₱${a.fine_amount}` : "-",
-            <StatusBadge key={a.assessment_id} status={a.status} />,
-            <div key={`actions-${a.assessment_id}`} className="space-x-2">
-              <Button
-                color="blue"
-                label="View/Edit"
-                onClick={() => {
-                  setSelected(a);
-                  setModal("edit");
-                }}
-              />
+          rows={filteredAssessments.map((a) => [
+            a.id,
+            a.student_name,
+            a.gadget_name,
+            a.serial,
+            a.condition,
+            a.date_reported,
+            a.fine_amount,
+            <StatusBadge status={a.status} key={a.id} />,
+            <div key={a.id} className="flex gap-2">
+              {a.status === "Pending" && (
+                <>
+                  <button
+                    onClick={() => createFine(a)}
+                    className="text-green-400 hover:underline"
+                  >
+                    Create Fine
+                  </button>
+                  <button
+                    onClick={() => setSelected(a)}
+                    className="text-blue-400 hover:underline"
+                  >
+                    View
+                  </button>
+                </>
+              )}
+              {a.status === "Resolved" && (
+                <button
+                  onClick={() => setSelected(a)}
+                  className="text-gray-400 hover:underline"
+                >
+                  View
+                </button>
+              )}
             </div>,
           ])}
         />
-      </div>
+      </section>
 
-      {modal === "add" && (
-        <AddAssessmentModal
-          onSave={handleAdd}
-          onClose={() => setModal(null)}
-        />
-      )}
+      {/* ---------- MODAL ---------- */}
+      {selected && (
+        <Modal title={`Assessment #${selected.id}`} onClose={() => setSelected(null)}>
+          <div className="space-y-3 text-sm">
+            <p><b>Student:</b> {selected.student_name}</p>
+            <p><b>Rental ID:</b> {selected.rental_id}</p>
+            <p><b>Gadget:</b> {selected.gadget_name}</p>
+            <p><b>Serial:</b> {selected.serial}</p>
+            <p><b>Condition:</b> {selected.condition}</p>
+            <p><b>Issue:</b> {selected.issue}</p>
+            <p><b>Date Reported:</b> {selected.date_reported}</p>
+            <p><b>Fine Amount:</b> ₱{selected.fine_amount}</p>
+            <p><b>Status:</b> <StatusBadge status={selected.status} /></p>
 
-      {modal === "edit" && selected && (
-        <EditAssessmentModal
-          assessment={selected}
-          onSave={handleUpdate}
-          onClose={() => setModal(null)}
-        />
+            {selected.status === "Pending" && (
+              <div className="flex justify-end gap-3 mt-4">
+                <button
+                  onClick={() => {
+                    createFine(selected);
+                    setSelected(null);
+                  }}
+                  className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm"
+                >
+                  Create Fine
+                </button>
+                <button
+                  onClick={() => {
+                    markResolved(selected.id);
+                    setSelected(null);
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm"
+                >
+                  Mark Resolved
+                </button>
+              </div>
+            )}
+          </div>
+        </Modal>
       )}
     </div>
   );
 }
 
-/* ---------- Reusable UI Components ---------- */
+/* ---------- COMPONENTS ---------- */
+function SummaryCard({ title, value }) {
+  return (
+    <div className="bg-gray-800 rounded-xl p-4 shadow-md text-center">
+      <p className="text-sm text-gray-400">{title}</p>
+      <h3 className="text-2xl font-bold">{value}</h3>
+    </div>
+  );
+}
 
 function Table({ headers, rows }) {
   return (
@@ -126,12 +244,12 @@ function Table({ headers, rows }) {
           {rows.length === 0 ? (
             <tr>
               <td colSpan={headers.length} className="text-center py-3 text-gray-500">
-                No damage assessments logged
+                No reports found
               </td>
             </tr>
           ) : (
             rows.map((r, i) => (
-              <tr key={i} className="border-b border-gray-800 hover:bg-gray-800">
+              <tr key={i} className="border-b border-gray-800 hover:bg-gray-800/40">
                 {r.map((cell, j) => (
                   <td key={j} className="py-2 px-3 text-sm">
                     {cell}
@@ -146,32 +264,14 @@ function Table({ headers, rows }) {
   );
 }
 
-function Button({ color, label, onClick }) {
-  const colors = {
-    blue: "bg-blue-600 hover:bg-blue-700",
-    green: "bg-green-600 hover:bg-green-700",
-    red: "bg-red-600 hover:bg-red-700",
-  };
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3 py-1 rounded text-sm ${colors[color]}`}
-    >
-      {label}
-    </button>
-  );
-}
-
 function StatusBadge({ status }) {
   const color =
-    status === "Cleared"
-      ? "bg-green-600"
-      : status === "Pending"
+    status === "Pending"
       ? "bg-yellow-600"
-      : "bg-red-600";
-  return (
-    <span className={`px-2 py-1 rounded text-xs ${color}`}>{status}</span>
-  );
+      : status === "Resolved"
+      ? "bg-green-600"
+      : "bg-gray-600";
+  return <span className={`px-2 py-1 rounded text-xs ${color}`}>{status}</span>;
 }
 
 function Modal({ title, children, onClose }) {
@@ -188,145 +288,5 @@ function Modal({ title, children, onClose }) {
         </button>
       </div>
     </div>
-  );
-}
-
-/* ---------- Add Modal ---------- */
-function AddAssessmentModal({ onSave, onClose }) {
-  const [form, setForm] = useState({
-    rental_id: "",
-    initial_notes: "",
-    fine_amount: 0,
-    status: "Pending",
-  });
-
-  const handleSubmit = () => {
-    if (!form.rental_id || !form.initial_notes) {
-      alert("Please fill out all required fields.");
-      return;
-    }
-    onSave(form);
-  };
-
-  return (
-    <Modal title="Log New Damage Assessment" onClose={onClose}>
-      <div className="space-y-3">
-        <div>
-          <label className="text-sm text-gray-400">Rental ID:</label>
-          <input
-            value={form.rental_id}
-            onChange={(e) => setForm({ ...form, rental_id: e.target.value })}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-        <div>
-          <label className="text-sm text-gray-400">Initial Notes:</label>
-          <textarea
-            value={form.initial_notes}
-            onChange={(e) => setForm({ ...form, initial_notes: e.target.value })}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm h-20"
-          />
-        </div>
-        <div>
-          <label className="text-sm text-gray-400">Fine Amount (₱):</label>
-          <input
-            type="number"
-            value={form.fine_amount}
-            onChange={(e) =>
-              setForm({ ...form, fine_amount: Number(e.target.value) })
-            }
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1 bg-gray-700 rounded">
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded"
-          >
-            Save
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-/* ---------- Edit Modal ---------- */
-function EditAssessmentModal({ assessment, onSave, onClose }) {
-  const [form, setForm] = useState({ ...assessment });
-
-  const handleSubmit = () => {
-    if (!form.final_notes) {
-      alert("Please add final notes before saving.");
-      return;
-    }
-    onSave(form);
-  };
-
-  return (
-    <Modal title="Edit Damage Assessment" onClose={onClose}>
-      <div className="space-y-3">
-        <p className="text-sm text-gray-400">
-          <b>Rental ID:</b> {form.rental_id}
-        </p>
-
-        <div>
-          <label className="text-sm text-gray-400">Initial Notes:</label>
-          <p className="bg-gray-800 rounded px-3 py-2 text-sm mt-1">
-            {form.initial_notes}
-          </p>
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Final Notes:</label>
-          <textarea
-            value={form.final_notes}
-            onChange={(e) => setForm({ ...form, final_notes: e.target.value })}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm h-20"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Fine Amount (₱):</label>
-          <input
-            type="number"
-            value={form.fine_amount}
-            onChange={(e) =>
-              setForm({ ...form, fine_amount: Number(e.target.value) })
-            }
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Status:</label>
-          <select
-            value={form.status}
-            onChange={(e) => setForm({ ...form, status: e.target.value })}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          >
-            <option>Pending</option>
-            <option>With Fine</option>
-            <option>Cleared</option>
-          </select>
-        </div>
-
-        <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1 bg-gray-700 rounded">
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded"
-          >
-            Save Changes
-          </button>
-        </div>
-      </div>
-    </Modal>
   );
 }

@@ -1,164 +1,209 @@
-import { useState } from "react";
-
-const initialTypes = [
-  { type_id: 1, type_name: "Microcontroller", description: "Arduino, ESP32, etc." },
-  { type_id: 2, type_name: "Sensor Kit", description: "Temperature, Motion, and Light sensors" },
-  { type_id: 3, type_name: "Raspberry Pi", description: "Raspberry Pi boards and accessories" },
-];
-
-const initialGadgets = [
-  {
-    gadget_id: 1,
-    serial_number: "ARD-001",
-    gadget_name: "Arduino Uno",
-    description: "Microcontroller for prototyping",
-    status: "Available",
-    type_id: 1,
-    quantity_total: 10,
-    quantity_available: 7,
-  },
-  {
-    gadget_id: 2,
-    serial_number: "ESP-101",
-    gadget_name: "ESP32 Dev Board",
-    description: "WiFi-enabled microcontroller board",
-    status: "Rented",
-    type_id: 1,
-    quantity_total: 8,
-    quantity_available: 3,
-  },
-  {
-    gadget_id: 3,
-    serial_number: "SNS-050",
-    gadget_name: "Basic Sensor Kit",
-    description: "Contains IR, Temp, and Motion sensors",
-    status: "Available",
-    type_id: 2,
-    quantity_total: 5,
-    quantity_available: 5,
-  },
-];
+import { useState, useMemo } from "react";
 
 export default function Inventory() {
-  const [gadgets, setGadgets] = useState(initialGadgets);
-  const [types] = useState(initialTypes);
-  const [modal, setModal] = useState(null);
+  // --- Mock Data (replace with Supabase later) ---
+  const [units, setUnits] = useState([
+    {
+      unit_id: 101,
+      serial_number: "SN-A001",
+      gadget_name: "Arduino Uno",
+      description: "Basic microcontroller board",
+      status: "Available",
+      condition: "Good",
+      type_name: "Microcontrollers",
+    },
+    {
+      unit_id: 102,
+      serial_number: "SN-A002",
+      gadget_name: "Arduino Uno",
+      description: "Basic microcontroller board",
+      status: "In Use",
+      condition: "Fair",
+      type_name: "Microcontrollers",
+    },
+    {
+      unit_id: 103,
+      serial_number: "SN-B015",
+      gadget_name: "ESP32 Dev Board",
+      description: "WiFi + Bluetooth microcontroller",
+      status: "Available",
+      condition: "Good",
+      type_name: "Microcontrollers",
+    },
+    {
+      unit_id: 104,
+      serial_number: "SN-C005",
+      gadget_name: "Ultrasonic Sensor",
+      description: "Distance measurement sensor",
+      status: "In Repair",
+      condition: "Good",
+      type_name: "Sensors",
+    },
+  ]);
+
+  const [filterType, setFilterType] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
 
-  const handleAddGadget = (gadget) => {
-    const newGadget = {
-      gadget_id: gadgets.length + 1,
-      ...gadget,
-      quantity_available: gadget.quantity_total,
-    };
-    setGadgets([...gadgets, newGadget]);
-    setModal(null);
-  };
+  // --- Compute summary stats ---
+  const stats = useMemo(() => {
+    const total = units.length;
+    const available = units.filter((u) => u.status === "Available").length;
+    const inUse = units.filter((u) => u.status === "In Use").length;
+    const inRepair = units.filter((u) => u.status === "In Repair").length;
+    return { total, available, inUse, inRepair };
+  }, [units]);
 
-  const handleEditGadget = (gadget) => {
-    setGadgets(gadgets.map(g => g.gadget_id === gadget.gadget_id ? gadget : g));
-    setModal(null);
-  };
+  // --- Filtering logic ---
+  const filteredUnits = units.filter((u) => {
+    const matchType = filterType ? u.type_name === filterType : true;
+    const matchStatus = filterStatus ? u.status === filterStatus : true;
+    const matchSearch = search
+      ? u.gadget_name.toLowerCase().includes(search.toLowerCase()) ||
+        u.serial_number.toLowerCase().includes(search.toLowerCase()) ||
+        u.condition.toLowerCase().includes(search.toLowerCase())
+      : true;
+    return matchType && matchStatus && matchSearch;
+  });
 
-  const handleDelete = (id) => {
-    setGadgets(gadgets.filter(g => g.gadget_id !== id));
-    setModal(null);
-  };
+  // --- Unique type list for filter dropdown ---
+  const uniqueTypes = [...new Set(units.map((u) => u.type_name))];
 
   return (
-    <div className="text-white">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">Inventory Management</h1>
-        <button
-          onClick={() => setModal("add")}
-          className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded"
-        >
-          + Add Gadget
-        </button>
+    <div className="space-y-8 text-white">
+      {/* ---------- HEADER ---------- */}
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-bold">Inventory</h1>
+        <p className="text-sm text-gray-400">
+          Overview of all gadget units and their statuses.
+        </p>
       </div>
 
-      <div className="bg-gray-900 p-4 rounded-lg shadow">
+      {/* ---------- SUMMARY CARDS ---------- */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <SummaryCard title="Total Gadgets" value={stats.total} color="blue" />
+        <SummaryCard title="Available" value={stats.available} color="green" />
+        <SummaryCard title="In Use" value={stats.inUse} color="yellow" />
+        <SummaryCard title="In Repair" value={stats.inRepair} color="red" />
+      </div>
+
+      {/* ---------- FILTER + SEARCH ---------- */}
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-gray-900 p-4 rounded-lg">
+        <div className="flex gap-3">
+          <select
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value)}
+            className="bg-gray-800 rounded px-3 py-2 text-sm"
+          >
+            <option value="">All Types</option>
+            {uniqueTypes.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="bg-gray-800 rounded px-3 py-2 text-sm"
+          >
+            <option value="">All Statuses</option>
+            <option value="Available">Available</option>
+            <option value="In Use">In Use</option>
+            <option value="In Repair">In Repair</option>
+          </select>
+        </div>
+
+        <input
+          type="text"
+          placeholder="Search by gadget name, serial, or condition"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="bg-gray-800 rounded px-3 py-2 text-sm focus:outline-none w-full sm:w-72"
+        />
+      </div>
+
+      {/* ---------- INVENTORY TABLE ---------- */}
+      <section className="bg-gray-900 rounded-xl p-6 shadow-lg">
         <Table
           headers={[
-            "ID",
             "Serial Number",
-            "Name",
+            "Gadget Name",
+            "Description",
             "Type",
+            "Condition",
             "Status",
-            "Total Qty",
-            "Available",
             "Actions",
           ]}
-          rows={gadgets.map((g) => [
-            g.gadget_id,
-            g.serial_number,
-            g.gadget_name,
-            types.find((t) => t.type_id === g.type_id)?.type_name || "-",
-            <StatusBadge status={g.status} key={g.gadget_id} />,
-            g.quantity_total,
-            g.quantity_available,
-            <div className="space-x-2" key={`btn-${g.gadget_id}`}>
-              <Button
-                color="blue"
-                label="Edit"
-                onClick={() => {
-                  setSelected(g);
-                  setModal("edit");
-                }}
-              />
-              <Button
-                color="red"
-                label="Delete"
-                onClick={() => {
-                  setSelected(g);
-                  setModal("delete");
-                }}
-              />
-            </div>,
+          rows={filteredUnits.map((u) => [
+            u.serial_number,
+            u.gadget_name,
+            u.description,
+            u.type_name,
+            u.condition,
+            <StatusBadge key={u.unit_id} status={u.status} />,
+            <button
+              key={`view-${u.unit_id}`}
+              onClick={() => setSelected(u)}
+              className="text-blue-400 hover:underline"
+            >
+              View
+            </button>,
           ])}
         />
-      </div>
+      </section>
 
-      {/* ADD GADGET MODAL */}
-      {modal === "add" && (
-        <GadgetModal
-          title="Add New Gadget"
-          types={types}
-          onSave={handleAddGadget}
-          onClose={() => setModal(null)}
-        />
-      )}
-
-      {/* EDIT GADGET MODAL */}
-      {modal === "edit" && selected && (
-        <GadgetModal
-          title="Edit Gadget"
-          types={types}
-          gadget={selected}
-          onSave={handleEditGadget}
-          onClose={() => setModal(null)}
-        />
-      )}
-
-      {/* DELETE CONFIRMATION MODAL */}
-      {modal === "delete" && selected && (
-        <Modal title="Delete Gadget" onClose={() => setModal(null)}>
-          <p>
-            Are you sure you want to delete <b>{selected.gadget_name}</b>?
-          </p>
-          <ActionRow
-            onCancel={() => setModal(null)}
-            onConfirm={() => handleDelete(selected.gadget_id)}
-            confirmLabel="Delete"
-            confirmColor="red"
-          />
+      {/* ---------- MODAL FOR UNIT DETAILS ---------- */}
+      {selected && (
+        <Modal title={`Details for ${selected.serial_number}`} onClose={() => setSelected(null)}>
+          <div className="space-y-2 text-sm">
+            <p><b>Serial:</b> {selected.serial_number}</p>
+            <p><b>Gadget:</b> {selected.gadget_name}</p>
+            <p><b>Type:</b> {selected.type_name}</p>
+            <p><b>Description:</b> {selected.description}</p>
+            <p><b>Condition:</b> {selected.condition}</p>
+            <p><b>Status:</b> {selected.status}</p>
+            <div className="flex gap-2 mt-4">
+              <button
+                className="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded"
+                onClick={() => alert("Edit gadget unit feature coming soon")}
+              >
+                Edit
+              </button>
+              <button
+                className="bg-red-600 hover:bg-red-700 px-3 py-1 rounded"
+                onClick={() => alert("Mark as damaged / lost process will go here")}
+              >
+                Mark Issue
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>
   );
 }
 
-/* Helper Components */
+/* ---------- COMPONENTS ---------- */
+function SummaryCard({ title, value, color }) {
+  const colors = {
+    blue: "from-blue-500 to-blue-700",
+    green: "from-green-500 to-green-700",
+    red: "from-red-500 to-red-700",
+    yellow: "from-yellow-500 to-yellow-700",
+  };
+  return (
+    <div
+      className={`bg-gradient-to-br ${colors[color]} rounded-xl p-4 shadow-md flex flex-col justify-between`}
+    >
+      <p className="text-sm opacity-80">{title}</p>
+      <h3 className="text-2xl font-bold">{value}</h3>
+    </div>
+  );
+}
+
 function Table({ headers, rows }) {
   return (
     <div className="overflow-x-auto">
@@ -166,10 +211,7 @@ function Table({ headers, rows }) {
         <thead>
           <tr className="border-b border-gray-700">
             {headers.map((h) => (
-              <th
-                key={h}
-                className="py-2 px-3 text-sm font-semibold text-gray-300"
-              >
+              <th key={h} className="py-2 px-3 text-sm font-semibold text-gray-300">
                 {h}
               </th>
             ))}
@@ -178,19 +220,13 @@ function Table({ headers, rows }) {
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td
-                colSpan={headers.length}
-                className="text-center py-3 text-gray-500"
-              >
-                No gadgets
+              <td colSpan={headers.length} className="text-center py-3 text-gray-500">
+                No data available
               </td>
             </tr>
           ) : (
             rows.map((r, i) => (
-              <tr
-                key={i}
-                className="border-b border-gray-800 hover:bg-gray-800"
-              >
+              <tr key={i} className="border-b border-gray-800 hover:bg-gray-800/40">
                 {r.map((cell, j) => (
                   <td key={j} className="py-2 px-3 text-sm">
                     {cell}
@@ -205,20 +241,16 @@ function Table({ headers, rows }) {
   );
 }
 
-function Button({ color, label, onClick }) {
-  const colors = {
-    blue: "bg-blue-600 hover:bg-blue-700",
-    green: "bg-green-600 hover:bg-green-700",
-    red: "bg-red-600 hover:bg-red-700",
-  };
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3 py-1 rounded text-sm ${colors[color]}`}
-    >
-      {label}
-    </button>
-  );
+function StatusBadge({ status }) {
+  const color =
+    status === "Available"
+      ? "bg-green-600"
+      : status === "In Use"
+      ? "bg-yellow-600"
+      : status === "In Repair"
+      ? "bg-red-600"
+      : "bg-gray-600";
+  return <span className={`px-2 py-1 rounded text-xs ${color}`}>{status}</span>;
 }
 
 function Modal({ title, children, onClose }) {
@@ -235,148 +267,5 @@ function Modal({ title, children, onClose }) {
         </button>
       </div>
     </div>
-  );
-}
-
-function ActionRow({ onCancel, onConfirm, confirmLabel, confirmColor }) {
-  const colors = {
-    blue: "bg-blue-600 hover:bg-blue-700",
-    green: "bg-green-600 hover:bg-green-700",
-    red: "bg-red-600 hover:bg-red-700",
-  };
-  return (
-    <div className="mt-4 flex justify-end gap-2">
-      <button onClick={onCancel} className="px-3 py-1 bg-gray-700 rounded">
-        Cancel
-      </button>
-      <button
-        onClick={onConfirm}
-        className={`px-3 py-1 rounded ${colors[confirmColor]}`}
-      >
-        {confirmLabel}
-      </button>
-    </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const color =
-    status === "Available"
-      ? "bg-green-600"
-      : status === "Rented"
-      ? "bg-blue-600"
-      : "bg-yellow-600";
-  return (
-    <span className={`px-2 py-1 rounded text-xs ${color}`}>{status}</span>
-  );
-}
-
-/* --- Gadget Add/Edit Modal --- */
-function GadgetModal({ title, types, gadget, onSave, onClose }) {
-  const [form, setForm] = useState(
-    gadget || {
-      serial_number: "",
-      gadget_name: "",
-      description: "",
-      type_id: types[0]?.type_id || 1,
-      status: "Available",
-      quantity_total: 1,
-    }
-  );
-
-  const handleChange = (field, value) => {
-    setForm({ ...form, [field]: value });
-  };
-
-  const handleSubmit = () => {
-    if (!form.gadget_name || !form.serial_number)
-      return alert("Please fill in all required fields");
-    onSave(form);
-  };
-
-  return (
-    <Modal title={title} onClose={onClose}>
-      <div className="space-y-3">
-        <div>
-          <label className="text-sm text-gray-400">Serial Number:</label>
-          <input
-            value={form.serial_number}
-            onChange={(e) => handleChange("serial_number", e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Gadget Name:</label>
-          <input
-            value={form.gadget_name}
-            onChange={(e) => handleChange("gadget_name", e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Description:</label>
-          <textarea
-            value={form.description}
-            onChange={(e) => handleChange("description", e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Type:</label>
-          <select
-            value={form.type_id}
-            onChange={(e) => handleChange("type_id", parseInt(e.target.value))}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          >
-            {types.map((t) => (
-              <option key={t.type_id} value={t.type_id}>
-                {t.type_name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Status:</label>
-          <select
-            value={form.status}
-            onChange={(e) => handleChange("status", e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          >
-            <option>Available</option>
-            <option>Rented</option>
-            <option>Maintenance</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Total Quantity:</label>
-          <input
-            type="number"
-            min="1"
-            value={form.quantity_total}
-            onChange={(e) =>
-              handleChange("quantity_total", parseInt(e.target.value))
-            }
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1 bg-gray-700 rounded">
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded"
-          >
-            Save Gadget
-          </button>
-        </div>
-      </div>
-    </Modal>
   );
 }
