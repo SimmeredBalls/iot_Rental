@@ -9,7 +9,7 @@ import Transactions from "./pages/Transactions";
 import RentalExtensions from "./pages/RentalExtensions";
 import DamageAssessments from "./pages/DamageAssessments";
 import Login from "./pages/Login";
-import AdminSettings from "./pages/AdminSettings";
+import RentalRequests from "./pages/RentalRequests";
 
 // 🔒 Route guard
 function ProtectedRoute({ children }) {
@@ -21,9 +21,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Public Route */}
         <Route path="/login" element={<Login />} />
 
-        {/* Protected Routes */}
+        {/* Protected Routes with Sidebar Layout */}
         <Route
           path="/"
           element={
@@ -32,16 +33,19 @@ export default function App() {
             </ProtectedRoute>
           }
         >
-          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="rentals" element={<Rentals />} />
+          <Route path="rental-requests" element={<RentalRequests />} />
           <Route path="inventory" element={<Inventory />} />
           <Route path="students" element={<Students />} />
           <Route path="transactions" element={<Transactions />} />
           <Route path="rental-extensions" element={<RentalExtensions />} />
           <Route path="damage-assessments" element={<DamageAssessments />} />
-          <Route path="/admin-settings" element={<AdminSettings />} />
         </Route>
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
   );

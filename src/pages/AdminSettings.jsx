@@ -9,6 +9,21 @@ export default function AdminSettings() {
   const [selected, setSelected] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("name");
+
+
+  const filtered = admins.filter(
+    (a) =>
+      a.name.toLowerCase().includes(search.toLowerCase()) ||
+      a.email.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === "role") return a.role.localeCompare(b.role);
+    return a.name.localeCompare(b.name);
+  });
+
 
   // Mock stats
   const totalAdmins = admins.length;
@@ -18,6 +33,8 @@ export default function AdminSettings() {
     setAdmins([...admins, { id: Date.now(), ...newAdmin }]);
     setShowAddModal(false);
   };
+
+  
 
   return (
     <div className="space-y-8 text-white">
@@ -38,11 +55,30 @@ export default function AdminSettings() {
         <SummaryCard title="Active Admins" value={activeAdmins} color="green" />
       </div>
 
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-gray-900 p-4 rounded-lg">
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+          className="bg-gray-800 rounded px-3 py-2 text-sm"
+        >
+          <option value="name">Sort by Name</option>
+          <option value="role">Sort by Role</option>
+        </select>
+
+        <input
+          type="text"
+          placeholder="Search admin..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="bg-gray-800 rounded px-3 py-2 text-sm focus:outline-none w-full sm:w-72"
+        />
+      </div>
+
       {/* TABLE */}
       <section className="bg-gray-900 rounded-xl p-6 shadow-lg">
         <Table
           headers={["Name", "Email", "Role", "Status", "Actions"]}
-          rows={admins.map((a) => [
+          rows={sorted.map((a) => [
             a.name,
             a.email,
             a.role,
@@ -140,21 +176,29 @@ function StatusBadge({ status }) {
 }
 
 function Modal({ title, children, onClose }) {
+  const handleBackgroundClick = (e) => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+    <div
+      onClick={handleBackgroundClick}
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+    >
       <div className="bg-gray-900 p-6 rounded-lg shadow-lg w-full max-w-md relative">
         <h3 className="text-xl font-semibold mb-4">{title}</h3>
         {children}
         <button
           onClick={onClose}
-          className="absolute top-2 right-2 text-gray-400 hover:text-white"
+          className="absolute top-2 right-2 text-gray-400 hover:text-white text-xl"
         >
-          ✕
+          ×
         </button>
       </div>
     </div>
   );
 }
+
 
 /* ---------- FORMS ---------- */
 

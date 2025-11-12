@@ -1,458 +1,1057 @@
-import { useState } from "react";
+
+import { useState, useEffect, useMemo } from "react";
+import { supabase } from "../lib/supabaseClient";
+import { SummaryCard, Table, StatusBadge, Modal } from "../components/ui/CommonUI";
 
 export default function Rentals() {
-  // --- Mock Rentals Data (Replace with Supabase fetch later) ---
-  const [rentals, setRentals] = useState([
-    {
-      rental_id: 1001,
-      student_name: "John Doe",
-      rental_date: "2025-10-20",
-      due_date: "2025-11-05",
-      return_date: null,
-      status: "Pending",
-      items: [{ serial: "SN-A001", gadget_name: "Arduino Uno", condition: "Good" }],
-    },
-    {
-      rental_id: 1002,
-      student_name: "Jane Smith",
-      rental_date: "2025-10-22",
-      due_date: "2025-11-06",
-      return_date: null,
-      status: "For Pick-Up",
-      items: [{ serial: "SN-B015", gadget_name: "ESP32 Dev Board", condition: "Good" }],
-    },
-    {
-      rental_id: 1003,
-      student_name: "Mike Johnson",
-      rental_date: "2025-10-25",
-      due_date: "2025-11-01",
-      return_date: null,
-      status: "Active",
-      items: [{ serial: "SN-C009", gadget_name: "Raspberry Pi 4", condition: "Good" }],
-    },
-    {
-      rental_id: 1004,
-      student_name: "Lisa Brown",
-      rental_date: "2025-10-10",
-      due_date: "2025-10-20",
-      return_date: "2025-10-21",
-      status: "Returned",
-      items: [{ serial: "SN-D011", gadget_name: "Ultrasonic Sensor", condition: "Good" }],
-    },
-    {
-      rental_id: 1005,
-      student_name: "Alex Lee",
-      rental_date: "2025-10-15",
-      due_date: "2025-10-25",
-      return_date: null,
-      status: "Overdue",
-      items: [{ serial: "SN-E007", gadget_name: "Multimeter", condition: "Good" }],
-    },
-  ]);
-
-  const [filter, setFilter] = useState("");
-  const [search, setSearch] = useState("");
+  const [rentals, setRentals] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
-  const [damageModal, setDamageModal] = useState(null);
-  const [fines, setFines] = useState([]);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showDamageModal, setShowDamageModal] = useState(false);
+  const [showLostModal, setShowLostModal] = useState(false);
+  const [showExtensions, setShowExtensions] = useState(false);
+  const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedRentalForTransaction, setSelectedRentalForTransaction] = useState(null);
+  const ITEMS_PER_PAGE = 8;
 
-  // --- Status Counts ---
-  const stats = {
-    Pending: rentals.filter((r) => r.status === "Pending").length,
-    "For Pick-Up": rentals.filter((r) => r.status === "For Pick-Up").length,
-    Active: rentals.filter((r) => r.status === "Active").length,
-    Returned: rentals.filter((r) => r.status === "Returned").length,
-    Overdue: rentals.filter((r) => r.status === "Overdue").length,
-  };
 
-  // --- Filtering & Searching Logic ---
+  // ✅ Fetch rentals
+  async function fetchRentals() {
+    setLoading(true);
+
+  const { data, error } = await supabase
+    .from("rentals")
+    .select(`
+      rental_id,
+      rental_date,
+      due_date,
+      return_date,
+      rental_status,
+      students ( student_id, name, email ),
+      rental_items (
+        quantity,
+        gadgets (
+          gadget_id,
+          gadget_name,
+          serial_number
+        )
+      ),
+      damage_assessments (
+        assessment_id,
+        status
+      ),
+      rental_extensions!left (
+        extension_id,
+        status,
+        new_due_date
+      )
+    `)
+    .order("rental_date", { ascending: false });
+
+
+
+    if (error) console.error("Error fetching rentals:", error);
+    else setRentals(data);
+
+    setLoading(false);
+  }
+
+    // ✅ Automatically create late fine transaction
+  async function createLateFine(rental) {
+    try {
+      // calculate days overdue
+      const due = new Date(rental.due_date);
+      const returned = new Date();
+      const daysLate = Math.ceil((returned - due) / (1000 * 60 * 60 * 24));
+      if (daysLate <= 0) return; // no fine if returned on time
+
+      const finePerDay = 50; // 💰 adjustable rate
+      const totalFine = daysLate * finePerDay;
+
+      const { error } = await supabase.from("transactions").insert([
+        {
+          student_id: rental.students?.student_id,
+          rental_id: rental.rental_id,
+          transaction_type: "Overdue Fine",
+          amount: totalFine,
+          status: "Unpaid",
+          transaction_date: new Date().toISOString(),
+        },
+      ]);
+
+      if (error) throw error;
+      alert(`⚠️ Late return detected. ₱${totalFine} fine created for ${daysLate} day(s) overdue.`);
+    } catch (error) {
+      console.error("Error creating late fine:", error.message);
+    }
+  }
+
+
+  async function handlePickup(rental) {
+    try {
+      // Step 1: Update rental status to Ongoing
+      const { error: rentalError } = await supabase
+        .from("rentals")
+        .update({
+          rental_status: "Ongoing",
+          pickup_date: new Date().toISOString(),
+        })
+        .eq("rental_id", rental.rental_id);
+
+      if (rentalError) throw rentalError;
+
+      // Step 2: Mark all gadgets as "In Use"
+      const { data: rentalItems, error: itemsError } = await supabase
+        .from("rental_items")
+        .select("gadget_id")
+        .eq("rental_id", rental.rental_id);
+
+      if (itemsError) throw itemsError;
+
+      if (rentalItems?.length) {
+        const gadgetIds = rentalItems.map((i) => i.gadget_id);
+        const { error: gadgetError } = await supabase
+          .from("gadgets")
+          .update({ status: "In Use" })
+          .in("gadget_id", gadgetIds);
+
+        if (gadgetError) throw gadgetError;
+      }
+
+      alert("✅ Rental picked up and gadgets now marked as 'In Use'.");
+      fetchRentals(); // refresh list
+    } catch (error) {
+      console.error("Error in pickup:", error.message);
+      alert("Error processing pickup.");
+    }
+  }
+
+
+  useEffect(() => {
+    fetchRentals();
+  }, []);
+
+  useEffect(() => {
+    // ✅ Real-time listener for any rental-related table changes
+    const channel = supabase
+      .channel("rentals_realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rentals" },
+        () => fetchRentals()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rental_extensions" },
+        () => fetchRentals()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "damage_assessments" },
+        () => fetchRentals()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // ✅ Reset pagination when search/filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, filterStatus]);
+
+
+
+  async function handleMarkReturned(rental) {
+    try {
+      const confirmReturn = confirm(`Mark Rental #${rental.rental_id} as returned?`);
+      if (!confirmReturn) return;
+
+      // Step 1: Update rental status and return_date
+      const { error: rentalError } = await supabase
+        .from("rentals")
+        .update({
+          rental_status: "Completed",
+          return_date: new Date().toISOString(),
+        })
+        .eq("rental_id", rental.rental_id);
+
+      if (rentalError) throw rentalError;
+
+      // Step 2: Get rental items (gadgets)
+      const { data: rentalItems, error: itemsError } = await supabase
+        .from("rental_items")
+        .select("gadget_id")
+        .eq("rental_id", rental.rental_id);
+
+      if (itemsError) throw itemsError;
+
+      // Step 3: Mark gadgets as "Available"
+      if (rentalItems?.length) {
+        const gadgetIds = rentalItems.map((i) => i.gadget_id);
+        const { error: gadgetError } = await supabase
+          .from("gadgets")
+          .update({ status: "Available" })
+          .in("gadget_id", gadgetIds);
+        if (gadgetError) throw gadgetError;
+      }
+            // Step 4: Auto-create overdue fine if applicable
+      await createLateFine(rental);
+
+      alert("✅ Rental marked as returned and gadgets are now available.");
+      fetchRentals(); // refresh data
+    } catch (error) {
+      console.error("Error marking as returned:", error.message);
+      alert("❌ Failed to mark rental as returned.");
+    }
+  }
+
+
+
+  // --- Stats ---
+  const stats = useMemo(() => {
+    const total = rentals.length;
+    const pending = rentals.filter((r) => r.rental_status === "Pending").length;
+    const ongoing = rentals.filter((r) => r.rental_status === "Ongoing").length;
+    const completed = rentals.filter((r) => r.rental_status === "Completed").length;
+    const lost = rentals.filter((r) => r.rental_status === "Lost").length;
+    const overdue = rentals.filter(
+      (r) =>
+        r.rental_status === "Ongoing" &&
+        r.due_date &&
+        new Date(r.due_date) < new Date()
+    ).length;
+
+    return { total, pending, ongoing, completed, overdue, lost };
+
+  }, [rentals]);
+
+  if (loading) return <div className="text-gray-400">Loading rentals...</div>;
+
+  // --- Filtered + Paginated Rentals ---
   const filteredRentals = rentals.filter((r) => {
-    const matchFilter = filter ? r.status === filter : true;
+    const matchStatus = filterStatus ? r.rental_status === filterStatus : true;
     const matchSearch = search
-      ? r.student_name.toLowerCase().includes(search.toLowerCase()) ||
-        r.items.some((item) =>
-          item.gadget_name.toLowerCase().includes(search.toLowerCase())
+      ? r.students?.name?.toLowerCase().includes(search.toLowerCase()) ||
+        r.rental_items?.some((i) =>
+          i.gadgets?.gadget_name?.toLowerCase().includes(search.toLowerCase())
         )
       : true;
-    return matchFilter && matchSearch;
+    return matchStatus && matchSearch;
   });
 
-  // --- Action Handlers ---
-  const updateStatus = (rental_id, newStatus) => {
-    setRentals((prev) =>
-      prev.map((r) =>
-        r.rental_id === rental_id ? { ...r, status: newStatus } : r
-      )
-    );
-  };
-
-  const handleAssessDamage = (rental, item, condition, cost, notes) => {
-    // create fine record
-    const newFine = {
-      rental_id: rental.rental_id,
-      student_name: rental.student_name,
-      item: item.gadget_name,
-      type: condition === "Damaged" ? "Damage Fine" : "Lost Fine",
-      amount: cost,
-      notes,
-      status: "Unpaid",
-    };
-    setFines((prev) => [...prev, newFine]);
-
-    // update rental item condition
-    const updated = rentals.map((r) => {
-      if (r.rental_id === rental.rental_id) {
-        return {
-          ...r,
-          items: r.items.map((i) =>
-            i.serial === item.serial ? { ...i, condition } : i
-          ),
-        };
-      }
-      return r;
-    });
-    setRentals(updated);
-    setDamageModal(null);
-    alert("Damage assessment recorded and fine added!");
-  };
+  const totalPages = Math.ceil(filteredRentals.length / ITEMS_PER_PAGE);
+  const paginatedRentals = filteredRentals.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
 
   return (
     <div className="space-y-8 text-white">
-      {/* ---------- HEADER ---------- */}
+      {/* Header */}
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Rentals Management</h1>
-        <p className="text-sm text-gray-400">
-          Manage and track all gadget rentals.
-        </p>
-      </div>
-
-      {/* ---------- STATUS STATS ---------- */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-        {Object.entries(stats).map(([label, value]) => (
-          <SummaryCard key={label} title={label} value={value} />
-        ))}
-      </div>
-
-      {/* ---------- FILTERS ---------- */}
-      <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
+        <div>
+          <h1 className="text-3xl font-bold">Rentals</h1>
+          <p className="text-sm text-gray-400">Manage student gadget rentals.</p>
+        </div>
         <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Search by student or gadget"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="bg-gray-800 rounded px-3 py-2 text-sm focus:outline-none w-60"
-          />
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+          >
+            + New Rental
+          </button>
+
+          <button
+            onClick={() => setShowExtensions(true)}
+            className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg"
+          >
+            View Extensions
+          </button>
+        </div>
+
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <SummaryCard title="Total" value={stats.total} color="blue" />
+        <SummaryCard title="Pending" value={stats.pending} color="yellow" />
+        <SummaryCard title="Ongoing" value={stats.ongoing} color="green" />
+        <SummaryCard title="Completed" value={stats.completed} color="gray" />
+        <SummaryCard title="Overdue" value={stats.overdue} color="red" />
+        <SummaryCard title="Lost" value={stats.lost} color="orange" />
+      </div>
+
+      {/* Filters & Search */}
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-gray-900 p-4 rounded-lg">
+        <div className="flex gap-2">
           <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
             className="bg-gray-800 rounded px-3 py-2 text-sm"
           >
-            <option value="">All</option>
-            {Object.keys(stats).map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* ---------- RENTALS TABLE ---------- */}
-      <section className="bg-gray-900 rounded-xl p-6 shadow-lg">
-        <Table
-          headers={[
-            "Rental ID",
-            "Student",
-            "Status",
-            "Rental Date",
-            "Due Date",
-            "Return Date",
-            "Actions",
-          ]}
-          rows={filteredRentals.map((r) => [
-            r.rental_id,
-            r.student_name,
-            <StatusBadge status={r.status} key={r.rental_id} />,
-            r.rental_date,
-            r.due_date,
-            r.return_date ? r.return_date : "—",
-            <ActionButtons
-              rental={r}
-              onUpdateStatus={updateStatus}
-              onView={() => setSelected(r)}
-              onAssess={() => setDamageModal(r)}
-            />,
-          ])}
-        />
-      </section>
-
-      {/* ---------- RENTAL DETAILS MODAL ---------- */}
-      {selected && (
-        <Modal title={`Rental #${selected.rental_id}`} onClose={() => setSelected(null)}>
-          <div className="space-y-3 text-sm">
-            <p><b>Student:</b> {selected.student_name}</p>
-            <p><b>Rental Date:</b> {selected.rental_date}</p>
-            <p><b>Due Date:</b> {selected.due_date}</p>
-            <p><b>Status:</b> <StatusBadge status={selected.status} /></p>
-
-            <div className="mt-4">
-              <h4 className="text-md font-semibold mb-2">Rented Items</h4>
-              <Table
-                headers={["Serial", "Gadget Name", "Condition"]}
-                rows={selected.items.map((i) => [
-                  i.serial,
-                  i.gadget_name,
-                  i.condition,
-                ])}
-              />
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* ---------- DAMAGE ASSESSMENT MODAL ---------- */}
-      {damageModal && (
-        <DamageModal
-          rental={damageModal}
-          onClose={() => setDamageModal(null)}
-          onAssess={handleAssessDamage}
-        />
-      )}
-    </div>
-  );
-}
-
-/* ---------- REUSABLE COMPONENTS ---------- */
-function SummaryCard({ title, value }) {
-  const colors = {
-    Pending: "from-yellow-500 to-yellow-700",
-    "For Pick-Up": "from-blue-500 to-blue-700",
-    Active: "from-green-500 to-green-700",
-    Returned: "from-purple-500 to-purple-700",
-    Overdue: "from-red-500 to-red-700",
-  };
-  return (
-    <div
-      className={`bg-gradient-to-br ${colors[title] || "from-gray-600 to-gray-800"} rounded-xl p-4 shadow-md flex flex-col justify-between`}
-    >
-      <p className="text-sm opacity-80">{title}</p>
-      <h3 className="text-2xl font-bold">{value}</h3>
-    </div>
-  );
-}
-
-function Table({ headers, rows }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left border-collapse">
-        <thead>
-          <tr className="border-b border-gray-700">
-            {headers.map((h) => (
-              <th key={h} className="py-2 px-3 text-sm font-semibold text-gray-300">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={headers.length} className="text-center py-3 text-gray-500">
-                No data available
-              </td>
-            </tr>
-          ) : (
-            rows.map((r, i) => (
-              <tr key={i} className="border-b border-gray-800 hover:bg-gray-800/40">
-                {r.map((cell, j) => (
-                  <td key={j} className="py-2 px-3 text-sm">
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ActionButtons({ rental, onUpdateStatus, onView, onAssess }) {
-  const { status, rental_id } = rental;
-
-  switch (status) {
-    case "Pending":
-      return (
-        <div className="flex gap-2">
-          <button
-            onClick={() => onUpdateStatus(rental_id, "For Pick-Up")}
-            className="text-green-400 hover:underline"
-          >
-            Approve
-          </button>
-          <button
-            onClick={() => onUpdateStatus(rental_id, "Denied")}
-            className="text-red-400 hover:underline"
-          >
-            Deny
-          </button>
-        </div>
-      );
-
-    case "For Pick-Up":
-      return (
-        <button
-          onClick={() => onUpdateStatus(rental_id, "Active")}
-          className="text-blue-400 hover:underline"
-        >
-          Mark Picked Up
-        </button>
-      );
-
-    case "Active":
-      return (
-        <div className="flex gap-2">
-          <button
-            onClick={() => onUpdateStatus(rental_id, "Returned")}
-            className="text-green-400 hover:underline"
-          >
-            Mark Returned
-          </button>
-          <button
-            onClick={() => onAssess(rental, rental.items[0], "Lost", 500, "Lost item")}
-            className="text-red-400 hover:underline"
-          >
-            Mark Lost
-          </button>
-        </div>
-      );
-
-    case "Returned":
-      return (
-        <button
-          onClick={() => onAssess(rental)}
-          className="text-yellow-400 hover:underline"
-        >
-          Assess Damage
-        </button>
-      );
-
-    default:
-      return (
-        <button onClick={onView} className="text-blue-400 hover:underline">
-          View
-        </button>
-      );
-  }
-}
-
-function StatusBadge({ status }) {
-  const color =
-    status === "Active"
-      ? "bg-green-600"
-      : status === "Pending"
-      ? "bg-yellow-600"
-      : status === "Returned"
-      ? "bg-blue-600"
-      : status === "For Pick-Up"
-      ? "bg-purple-600"
-      : status === "Overdue"
-      ? "bg-red-600"
-      : "bg-gray-600";
-  return (
-    <span className={`px-2 py-1 rounded text-xs ${color}`}>{status}</span>
-  );
-}
-
-function Modal({ title, children, onClose }) {
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="bg-gray-900 p-6 rounded-lg shadow-lg w-full max-w-2xl relative">
-        <h3 className="text-xl font-semibold mb-4">{title}</h3>
-        {children}
-        <button
-          onClick={onClose}
-          className="absolute top-2 right-2 text-gray-400 hover:text-white"
-        >
-          ✕
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function DamageModal({ rental, onClose, onAssess }) {
-  const [selectedItem, setSelectedItem] = useState(rental.items[0]);
-  const [condition, setCondition] = useState("Damaged");
-  const [cost, setCost] = useState("");
-  const [notes, setNotes] = useState("");
-
-  return (
-    <Modal title={`Assess Damage - Rental #${rental.rental_id}`} onClose={onClose}>
-      <div className="space-y-4 text-sm">
-        <div>
-          <label className="block mb-1 text-gray-400">Select Item</label>
-          <select
-            value={selectedItem.serial}
-            onChange={(e) =>
-              setSelectedItem(
-                rental.items.find((i) => i.serial === e.target.value)
-              )
-            }
-            className="bg-gray-800 rounded px-3 py-2 w-full"
-          >
-            {rental.items.map((i) => (
-              <option key={i.serial} value={i.serial}>
-                {i.gadget_name} ({i.serial})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="block mb-1 text-gray-400">Condition</label>
-          <select
-            value={condition}
-            onChange={(e) => setCondition(e.target.value)}
-            className="bg-gray-800 rounded px-3 py-2 w-full"
-          >
-            <option value="Damaged">Damaged</option>
+            <option value="">All Statuses</option>
+            <option value="Pending">Pending</option>
+            <option value="Approved">Approved</option>
+            <option value="Reserved">Reserved</option>
+            <option value="Ongoing">Ongoing</option>
+            <option value="Completed">Completed</option>
             <option value="Lost">Lost</option>
           </select>
         </div>
 
+        <input
+          type="text"
+          placeholder="Search by student or gadget"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="bg-gray-800 rounded px-3 py-2 text-sm focus:outline-none w-full sm:w-72"
+        />
+      </div>
+
+
+
+      {/* Rentals Table */}
+      <section className="bg-gray-900 rounded-xl p-6 shadow-lg">
+        <Table
+          headers={["Student", "Rental Date", "Due Date", "Status", "Items", "Actions"]}
+          rows={paginatedRentals.map((r) => [
+            r.students?.name || "Unknown",
+            new Date(r.rental_date).toLocaleDateString(),
+            r.due_date ? new Date(r.due_date).toLocaleDateString() : "N/A",
+            new Date(r.due_date) < new Date() && r.rental_status === "Ongoing" ? (
+              <StatusBadge key={r.rental_id} status="Overdue" />
+            ) : (
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                <StatusBadge key={r.rental_id} status={r.rental_status} />
+                {r.damage_assessments?.some(a => a.status === "Pending") && (
+                  <span className="text-red-400 text-xs font-semibold">• Damage Flagged</span>
+                )}
+                {r.rental_extensions?.some(e => e.status === "Pending") && (
+                  <span className="text-yellow-400 text-xs font-semibold">• Extension Pending</span>
+                )}
+              </div>
+            ),
+            r.rental_items?.map((i) => i.gadgets?.gadget_name).join(", ") || "—",
+            <div key={`actions-${r.rental_id}`} className="flex gap-3">
+              <button
+                key={`view-${r.rental_id}`}
+                onClick={() => setSelected(r)}
+                className="text-blue-400 hover:underline"
+              >
+                View
+              </button>
+
+              {r.rental_status === "Approved" && (
+                <button
+                  onClick={() => handlePickup(r)}
+                  className="text-green-400 hover:underline"
+                >
+                  Pick Up
+                </button>
+              )}
+
+              {/* Actions for Ongoing Rentals */}
+              {r.rental_status === "Ongoing" && (
+                <>
+                  <button
+                    onClick={() => handleMarkReturned(r)}
+                    className="text-green-400 hover:underline"
+                  >
+                    Mark Returned
+                  </button>
+
+                  {/* 🟧 Mark as Lost (only for ongoing, not yet returned) */}
+                  <button
+                    onClick={() => {
+                      setSelectedRentalForTransaction(r);
+                      setShowLostModal(true);
+                    }}
+                    className="text-orange-400 hover:underline"
+                  >
+                    Mark as Lost
+                  </button>
+
+                </>
+              )}
+
+              {/* Actions for Completed Rentals */}
+              {r.rental_status === "Completed" && (
+                <button
+                  onClick={() => {
+                    setSelectedRentalForTransaction(r);
+                    setShowDamageModal(true);
+                  }}
+                  className="text-red-400 hover:underline"
+                >
+                  Flag Damage
+                </button>
+              )}
+
+            </div>,
+          ])}
+        />
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex justify-center gap-2 mt-4">
+            <button
+              onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1 bg-gray-700 rounded disabled:opacity-50"
+            >
+              Prev
+            </button>
+            <span className="text-gray-400 text-sm">
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1 bg-gray-700 rounded disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        )}
+
+      </section>
+
+      {/* Add Rental Modal */}
+      {showAddModal && (
+        <AddRentalModal onClose={() => setShowAddModal(false)} onSaved={fetchRentals} />
+      )}
+
+      {showExtensions && (
+        <RentalExtensionsModal
+          onClose={() => setShowExtensions(false)}
+          onUpdated={fetchRentals} // ✅ Auto refresh Rentals table after updates
+        />
+      )}
+
+      {showDamageModal && (
+        <AddDamageAssessmentModal
+          rental={selectedRentalForTransaction}
+          onClose={() => {
+            setShowDamageModal(false);
+            setSelectedRentalForTransaction(null);
+            fetchRentals(); // refresh after flag
+          }}
+        />
+      )}
+
+      {showLostModal && (
+        <AddLostAssessmentModal
+          rental={selectedRentalForTransaction}
+          onClose={() => {
+            setShowLostModal(false);
+            setSelectedRentalForTransaction(null);
+            fetchRentals();
+          }}
+        />
+      )}
+
+
+      {/* View Rental Details */}
+      {selected && (
+        <Modal title={`Rental Details`} onClose={() => setSelected(null)}>
+          <div className="space-y-2 text-sm">
+            <p><b>Student:</b> {selected.students?.name}</p>
+            <p><b>Email:</b> {selected.students?.email}</p>
+            <p><b>Status:</b> {selected.rental_status}</p>
+            <p><b>Rented on:</b> {new Date(selected.rental_date).toLocaleString()}</p>
+            <p><b>Due date:</b> {selected.due_date ? new Date(selected.due_date).toLocaleString() : "N/A"}</p>
+            {selected.return_date && (
+              <p><b>Returned on:</b> {new Date(selected.return_date).toLocaleString()}</p>
+            )}
+            <p><b>Items:</b></p>
+            <ul className="list-disc ml-5">
+              {selected.rental_items?.map((i, idx) => (
+                <li key={idx}>
+                  {i.gadgets?.gadget_name} (x{i.quantity})
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ==========================
+   Add Rental Modal Component
+   ========================== */
+function AddRentalModal({ onClose, onSaved }) {
+  const [students, setStudents] = useState([]);
+  const [gadgets, setGadgets] = useState([]);
+  const [form, setForm] = useState({
+    student_id: "",
+    due_date: "",
+    selectedGadgets: [],
+  });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetchStudents();
+    fetchAvailableGadgets();
+  }, []);
+
+  async function fetchStudents() {
+    const { data, error } = await supabase
+      .from("students")
+      .select("student_id, name")
+      .order("name");
+    if (error) console.error("Error loading students:", error);
+    else setStudents(data);
+  }
+
+  async function fetchAvailableGadgets() {
+    const { data, error } = await supabase
+      .from("gadgets")
+      .select("gadget_id, gadget_name, serial_number")
+      .eq("status", "Available")
+      .order("gadget_name");
+    if (error) console.error("Error loading gadgets:", error);
+    else setGadgets(data);
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.student_id || !form.due_date || form.selectedGadgets.length === 0) {
+      alert("Please fill out all fields and select at least one gadget.");
+      return;
+    }
+
+    setLoading(true);
+
+    // Step 1: Create rental
+    const { data: rental, error: rentalError } = await supabase
+      .from("rentals")
+      .insert([
+        {
+          student_id: form.student_id,
+          due_date: form.due_date,
+          rental_status: "Reserved",
+        },
+      ])
+      .select()
+      .single();
+
+    if (rentalError) {
+      console.error("Error creating rental:", rentalError);
+      alert("Error creating rental: " + rentalError.message);
+      setLoading(false);
+      return;
+    }
+
+    // Step 2: Add rental items
+    const rentalItems = form.selectedGadgets.map((g) => ({
+      rental_id: rental.rental_id,
+      gadget_id: g,
+      quantity: 1,
+    }));
+    const { error: itemsError } = await supabase.from("rental_items").insert(rentalItems);
+
+    if (itemsError) {
+      console.error("Error adding rental items:", itemsError);
+      alert("Error adding rental items: " + itemsError.message);
+    }
+
+    // Step 3: Update gadget status
+    await supabase.from("gadgets").update({ status: "Reserved" }).in("gadget_id", form.selectedGadgets);
+
+    // Step 4: Create rental payment transaction
+    const RENTAL_FEE = 200; // 💰 You can make this dynamic later
+    const { error: transactionError } = await supabase.from("transactions").insert([
+      {
+        student_id: form.student_id,
+        rental_id: rental.rental_id,
+        transaction_type: "Rental Payment",
+        amount: RENTAL_FEE,
+        status: "Unpaid", // since they'll pay during pickup
+        transaction_date: new Date().toISOString(),
+      },
+    ]);
+
+    if (transactionError) {
+      console.error("Error creating transaction:", transactionError);
+    }
+
+
+    alert("✅ Rental created successfully!");
+
+    // Reset form
+    setForm({ student_id: "", due_date: "", selectedGadgets: [] });
+
+    // ✅ Trigger parent refresh & close
+    onSaved?.();
+    onClose();
+    setLoading(false);
+  } 
+
+  function toggleGadgetSelection(id) {
+    setForm((prev) => ({
+      ...prev,
+      selectedGadgets: prev.selectedGadgets.includes(id)
+        ? prev.selectedGadgets.filter((gid) => gid !== id)
+        : [...prev.selectedGadgets, id],
+    }));
+  }
+
+  return (
+    <Modal title="New Rental" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-3 text-sm">
+        {/* Student */}
         <div>
-          <label className="block mb-1 text-gray-400">Fee (₱)</label>
+          <label className="block text-gray-400 mb-1">Student</label>
+          <select
+            value={form.student_id}
+            onChange={(e) => setForm({ ...form, student_id: e.target.value })}
+            className="w-full bg-gray-800 rounded px-3 py-2"
+          >
+            <option value="">Select student</option>
+            {students.map((s) => (
+              <option key={s.student_id} value={s.student_id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Due Date */}
+        <div>
+          <label className="block text-gray-400 mb-1">Due Date</label>
+          <input
+            type="date"
+            value={form.due_date}
+            onChange={(e) => setForm({ ...form, due_date: e.target.value })}
+            className="w-full bg-gray-800 rounded px-3 py-2"
+          />
+        </div>
+
+        {/* Gadgets */}
+        <div>
+          <label className="block text-gray-400 mb-1">Select Gadgets</label>
+          <div className="max-h-40 overflow-y-auto bg-gray-800 rounded p-2">
+            {gadgets.length === 0 ? (
+              <p className="text-gray-500 text-sm">No available gadgets.</p>
+            ) : (
+              gadgets.map((g) => (
+                <label
+                  key={g.gadget_id}
+                  className="flex items-center gap-2 py-1 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={form.selectedGadgets.includes(g.gadget_id)}
+                    onChange={() => toggleGadgetSelection(g.gadget_id)}
+                  />
+                  <span>
+                    {g.gadget_name} ({g.serial_number})
+                  </span>
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Buttons */}
+        <div className="flex justify-end gap-2 mt-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded"
+            disabled={loading}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={loading}
+            className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded"
+          >
+            {loading ? "Creating..." : "Create Rental"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function AddDamageAssessmentModal({ rental, onClose }) {
+  const [form, setForm] = useState({
+    initial_notes: "",
+    final_notes: "", 
+    fine_amount: "",
+    status: "Pending",
+  });
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.initial_notes) {
+      alert("Please enter assessment notes.");
+      return;
+    }
+
+    setLoading(true);
+    const { error } = await supabase.from("damage_assessments").insert([
+      {
+        rental_id: rental.rental_id,
+        initial_notes: form.initial_notes,
+        final_notes: form.final_notes, // ✅ corrected
+        fine_amount: Number(form.fine_amount) || null,
+        date_flagged: new Date().toISOString(),
+        status: form.status,
+      },
+    ]);
+
+
+    setLoading(false);
+
+    if (error) {
+      console.error(error);
+      alert("❌ Failed to save assessment.");
+    } else {
+      alert("✅ Damage/Loss assessment recorded!");
+      onClose();
+    }
+  }
+
+  return (
+    <Modal title="Flag Damage or Loss" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-3 text-sm">
+        <p>
+          <b>Rental ID:</b> {rental?.rental_id}
+        </p>
+        <p>
+          <b>Student:</b> {rental?.students?.name}
+        </p>
+
+        <div>
+          <label className="block text-gray-400 mb-1">Initial Notes</label>
+          <textarea
+            value={form.initial_notes}
+            onChange={(e) => setForm({ ...form, initial_notes: e.target.value })}
+            className="w-full bg-gray-800 rounded px-3 py-2"
+            rows={3}
+            placeholder="Describe the issue..."
+          />
+        </div>
+
+        <div>
+          <label className="block text-gray-400 mb-1">Final Notes (optional)</label>
+          <input
+            type="text"
+            value={form.final_notes}
+            onChange={(e) => setForm({ ...form, final_notes: e.target.value })}
+            className="w-full bg-gray-800 rounded px-3 py-2"
+          />
+        </div>
+
+        <div>
+          <label className="block text-gray-400 mb-1">Fine Amount (₱)</label>
           <input
             type="number"
-            value={cost}
-            onChange={(e) => setCost(e.target.value)}
-            className="bg-gray-800 rounded px-3 py-2 w-full"
-            placeholder="Enter fine amount"
+            value={form.fine_amount}
+            onChange={(e) => setForm({ ...form, fine_amount: e.target.value })}
+            className="w-full bg-gray-800 rounded px-3 py-2"
           />
         </div>
 
-        <div>
-          <label className="block mb-1 text-gray-400">Notes</label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            className="bg-gray-800 rounded px-3 py-2 w-full"
-            placeholder="Describe damage or loss"
-          />
-        </div>
-
-        <div className="flex justify-end mt-4">
+        <div className="flex justify-end gap-2 mt-4">
           <button
-            onClick={() => onAssess(rental, selectedItem, condition, cost, notes)}
-            className="bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded"
+            type="button"
+            onClick={onClose}
+            className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded"
           >
-            Save Assessment
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={loading}
+            className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded"
+          >
+            {loading ? "Saving..." : "Save Assessment"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function AddLostAssessmentModal({ rental, onClose }) {
+  const [loading, setLoading] = useState(false);
+  const LOST_FINE_RATE = 3000; // 💰 configurable fine rate
+
+  async function handleSubmit() {
+    if (!confirm("Are you sure you want to mark this rental as LOST?")) return;
+    setLoading(true);
+
+    try {
+      // 1️⃣ Create lost damage assessment
+      const { error: assessmentError } = await supabase
+        .from("damage_assessments")
+        .insert([
+          {
+            rental_id: rental.rental_id,
+            initial_notes: "Item marked as lost by admin.",
+            final_notice: "Lost",
+            fine_amount: LOST_FINE_RATE,
+            date_flagged: new Date().toISOString(),
+            status: "Pending",
+          },
+        ]);
+
+      if (assessmentError) throw assessmentError;
+
+      // 2️⃣ Create lost fine transaction
+      const { error: fineError } = await supabase.from("transactions").insert([
+        {
+          student_id: rental.students?.student_id,
+          rental_id: rental.rental_id,
+          transaction_type: "Lost Fine",
+          amount: LOST_FINE_RATE,
+          status: "Unpaid",
+          transaction_date: new Date().toISOString(),
+        },
+      ]);
+      if (fineError) throw fineError;
+
+      // 3️⃣ Update gadgets → Lost
+      const { data: rentalItems, error: itemsError } = await supabase
+        .from("rental_items")
+        .select("gadget_id")
+        .eq("rental_id", rental.rental_id);
+
+      if (itemsError) throw itemsError;
+
+      if (rentalItems?.length) {
+        const gadgetIds = rentalItems.map((i) => i.gadget_id);
+        const { error: gadgetError } = await supabase
+          .from("gadgets")
+          .update({ status: "Lost" })
+          .in("gadget_id", gadgetIds);
+        if (gadgetError) throw gadgetError;
+      }
+
+      // 4️⃣ Mark rental itself as Lost
+      const { error: rentalError } = await supabase
+        .from("rentals")
+        .update({
+          rental_status: "Lost",
+          return_date: new Date().toISOString(), // optional: record timestamp
+        })
+        .eq("rental_id", rental.rental_id);
+
+      if (rentalError) throw rentalError;
+
+      alert(
+        `✅ Lost item recorded.\n💸 ₱${LOST_FINE_RATE} fine added.\n📦 Rental #${rental.rental_id} marked as LOST.`
+      );
+      onClose();
+    } catch (error) {
+      console.error("❌ Error marking as lost:", error.message);
+      alert("❌ Failed to process lost rental.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Modal title="Mark as Lost" onClose={onClose}>
+      <div className="space-y-3 text-sm">
+        <p><b>Rental ID:</b> {rental?.rental_id}</p>
+        <p><b>Student:</b> {rental?.students?.name}</p>
+        <p>This will:</p>
+        <ul className="list-disc ml-5 text-gray-400">
+          <li>Create a Lost report in Damage Assessments</li>
+          <li>Add a Lost Fine of ₱{LOST_FINE_RATE}</li>
+          <li>Mark gadgets as “Lost” in inventory</li>
+          <li>Mark this rental as “Lost” in Rentals</li>
+        </ul>
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={handleSubmit}
+            className="bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded"
+          >
+            {loading ? "Processing..." : "Confirm Lost"}
           </button>
         </div>
       </div>
+    </Modal>
+  );
+}
+
+function RentalExtensionsModal({ onClose, onUpdated }) {
+  const [extensions, setExtensions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+
+  useEffect(() => {
+    fetchExtensions();
+  }, []);
+
+  async function fetchExtensions() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("rental_extensions")
+      .select(`
+        extension_id,
+        rental_id,
+        new_due_date,
+        status,
+        request_date,
+        rentals (
+          students (name),
+          due_date
+        )
+      `)
+      .order("request_date", { ascending: false });
+
+    if (error) console.error("Error fetching extensions:", error);
+    else setExtensions(data || []);
+    setLoading(false);
+  }
+
+  async function handleApprove(ext) {
+    if (!confirm("Approve this rental extension?")) return;
+
+    const EXTENSION_FEE = 100; // 💰 adjustable extension fee amount
+
+    try {
+      // Step 1️⃣ — Mark extension as approved
+      const { error: updateError } = await supabase
+        .from("rental_extensions")
+        .update({ status: "Approved" })
+        .eq("extension_id", ext.extension_id);
+
+      if (updateError) throw updateError;
+
+      // Step 2️⃣ — Update rental due date
+      const { error: rentalError } = await supabase
+        .from("rentals")
+        .update({ due_date: ext.new_due_date })
+        .eq("rental_id", ext.rental_id);
+
+      if (rentalError) throw rentalError;
+
+      // Step 3️⃣ — Fetch student_id for transaction creation
+      const { data: rentalData, error: rentalFetchError } = await supabase
+        .from("rentals")
+        .select("student_id")
+        .eq("rental_id", ext.rental_id)
+        .single();
+
+      if (rentalFetchError) throw rentalFetchError;
+
+      // Step 4️⃣ — Create Extension Fee transaction
+      const { error: transactionError } = await supabase.from("transactions").insert([
+        {
+          student_id: rentalData.student_id,
+          rental_id: ext.rental_id,
+          transaction_type: "Extension Fee",
+          amount: EXTENSION_FEE,
+          status: "Unpaid",
+          transaction_date: new Date().toISOString(),
+        },
+      ]);
+
+      if (transactionError) throw transactionError;
+
+      alert(`✅ Extension approved, due date updated, and ₱${EXTENSION_FEE} extension fee created!`);
+      fetchExtensions();
+      if (onUpdated) onUpdated();
+    } catch (error) {
+      console.error("Error approving extension:", error.message);
+      alert("❌ Failed to approve extension request.");
+    }
+  }
+
+
+  async function handleReject(id) {
+    if (!confirm("Reject this extension request?")) return;
+    const { error } = await supabase
+      .from("rental_extensions")
+      .update({ status: "Rejected" })
+      .eq("extension_id", id);
+
+    if (error) {
+      console.error(error);
+      alert("❌ Failed to reject extension.");
+    } else {
+      alert("❌ Extension rejected.");
+      fetchExtensions();
+      if (onUpdated) onUpdated();
+    }
+  }
+
+  return (
+    <Modal title="Rental Extension Requests" onClose={onClose}>
+      {loading ? (
+        <div className="text-gray-400 text-sm">Loading...</div>
+      ) : extensions.length === 0 ? (
+        <div className="text-gray-400 text-sm">No extension requests.</div>
+      ) : (
+        <div className="space-y-3 text-sm">
+          {extensions.map((ext) => (
+            <div
+              key={ext.extension_id}
+              className="bg-gray-800 p-3 rounded-lg flex justify-between items-center"
+            >
+              <div>
+                <p>
+                  <b>Student:</b> {ext.rentals?.students?.name || "Unknown"}
+                </p>
+                <p>
+                  <b>Current Due:</b>{" "}
+                  {new Date(ext.rentals?.due_date).toLocaleDateString()}
+                </p>
+                <p>
+                  <b>Requested New Due:</b>{" "}
+                  {new Date(ext.new_due_date).toLocaleDateString()}
+                </p>
+                <p>
+                  <b>Status:</b> <StatusBadge status={ext.status} />
+                </p>
+              </div>
+
+              {ext.status === "Pending" && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleApprove(ext)}
+                    className="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => handleReject(ext.extension_id)}
+                    className="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm"
+                  >
+                    Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </Modal>
   );
 }

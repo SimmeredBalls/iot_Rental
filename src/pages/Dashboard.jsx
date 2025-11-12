@@ -1,223 +1,128 @@
-import { useState, useEffect } from "react";
+// src/pages/Dashboard.jsx
+import { useEffect, useState, useMemo } from "react";
+import { supabase } from "../lib/supabaseClient";
+import { SummaryCard, Table, StatusBadge } from "../components/ui/CommonUI";
 
 export default function Dashboard() {
-  // --- Mock Data (to be replaced with Supabase later) ---
-  const [stats, setStats] = useState({
-    totalRentals: 42,
-    activeRentals: 16,
-    overdueRentals: 4,
-    totalStudents: 58,
-    inventoryItems: 27,
-    damagedUnits: 3, // NEW: gadget units currently marked as damaged
-    pendingAssessments: 2, // NEW: unresolved damage assessments
-  });
+  const [gadgets, setGadgets] = useState([]);
+  const [rentals, setRentals] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const [rentals, setRentals] = useState([
-    {
-      rental_id: 1001,
-      student_name: "John Doe",
-      item_name: "Arduino Uno",
-      status: "Active",
-      due_date: "2025-11-10",
-    },
-    {
-      rental_id: 1002,
-      student_name: "Jane Smith",
-      item_name: "ESP32 Dev Board",
-      status: "Pending",
-      due_date: "2025-11-04",
-    },
-  ]);
+  useEffect(() => {
+    fetchAll();
+  }, []);
 
-  // --- NEW: Mock Damage Assessments data ---
-  const [assessments, setAssessments] = useState([
-    {
-      assessment_id: 1,
-      gadget_name: "Arduino Uno - SN A001",
-      rental_id: 1001,
-      fine_amount: 250,
-      status: "Paid",
-      date_flagged: "2025-10-28",
-    },
-    {
-      assessment_id: 2,
-      gadget_name: "ESP32 Dev Board - SN A004",
-      rental_id: 1005,
-      fine_amount: 500,
-      status: "Pending",
-      date_flagged: "2025-11-01",
-    },
-  ]);
+  async function fetchAll() {
+    setLoading(true);
 
-  const [filter, setFilter] = useState("");
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState(null);
+    const [gadgetsRes, rentalsRes, transactionsRes, studentsRes] = await Promise.all([
+      supabase.from("gadgets").select("status"),
+      supabase.from("rentals").select("rental_status, due_date"),
+      supabase.from("transactions").select("status, amount, transaction_type, transaction_date, students (name)"),
+      supabase.from("students").select("student_id"),
+    ]);
 
-  // Filter & Search logic for rentals
-  const filteredRentals = rentals.filter((r) => {
-    const matchFilter = filter ? r.status === filter : true;
-    const matchSearch = search
-      ? r.student_name.toLowerCase().includes(search.toLowerCase()) ||
-        r.item_name.toLowerCase().includes(search.toLowerCase())
-      : true;
-    return matchFilter && matchSearch;
-  });
+    if (gadgetsRes.error) console.error(gadgetsRes.error);
+    if (rentalsRes.error) console.error(rentalsRes.error);
+    if (transactionsRes.error) console.error(transactionsRes.error);
+    if (studentsRes.error) console.error(studentsRes.error);
+
+    setGadgets(gadgetsRes.data || []);
+    setRentals(rentalsRes.data || []);
+    setTransactions(transactionsRes.data || []);
+    setStudents(studentsRes.data || []);
+    setLoading(false);
+  }
+
+  // Derived stats
+  const stats = useMemo(() => {
+    const totalGadgets = gadgets.length;
+    const available = gadgets.filter((g) => g.status === "Available").length;
+    const inUse = gadgets.filter((g) => g.status === "In Use").length;
+    const lost = gadgets.filter((g) => g.status === "Lost").length;
+
+    const totalRentals = rentals.length;
+    const ongoing = rentals.filter((r) => r.rental_status === "Ongoing").length;
+    const overdue = rentals.filter(
+      (r) => r.rental_status === "Ongoing" && new Date(r.due_date) < new Date()
+    ).length;
+
+    const unpaidTransactions = transactions.filter((t) => t.status === "Unpaid");
+    const unpaidTotal = unpaidTransactions.reduce((sum, t) => sum + (t.amount || 0), 0);
+    const paidTotal = transactions
+      .filter((t) => t.status === "Paid")
+      .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+    const totalStudents = students.length;
+
+    return {
+      totalGadgets,
+      available,
+      inUse,
+      lost,
+      totalRentals,
+      ongoing,
+      overdue,
+      totalStudents,
+      unpaidTotal,
+      paidTotal,
+    };
+  }, [gadgets, rentals, transactions, students]);
+
+  const recentTransactions = useMemo(() => {
+    return [...transactions]
+      .sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date))
+      .slice(0, 5);
+  }, [transactions]);
+
+  if (loading) return <div className="text-gray-400">Loading dashboard...</div>;
 
   return (
     <div className="space-y-8 text-white">
-      {/* ---------- HEADER ---------- */}
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+      {/* Header */}
+      <div>
+        <h1 className="text-3xl font-bold">Dashboard</h1>
         <p className="text-sm text-gray-400">
-          Welcome back, Admin — here’s an overview of the system today.
+          Overview of your inventory, rentals, and payments.
         </p>
       </div>
 
-      {/* ---------- SUMMARY CARDS ---------- */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <SummaryCard title="Total Rentals" value={stats.totalRentals} color="blue" />
-        <SummaryCard title="Active Rentals" value={stats.activeRentals} color="green" />
-        <SummaryCard title="Overdue Rentals" value={stats.overdueRentals} color="red" />
-        <SummaryCard title="Damaged Units" value={stats.damagedUnits} color="orange" />
-        <SummaryCard title="Pending Assessments" value={stats.pendingAssessments} color="purple" />
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <SummaryCard title="Total Gadgets" value={stats.totalGadgets} color="blue" />
+        <SummaryCard title="Available" value={stats.available} color="green" />
+        <SummaryCard title="In Use" value={stats.inUse} color="yellow" />
+        <SummaryCard title="Lost" value={stats.lost} color="red" />
+
+        <SummaryCard title="Total Rentals" value={stats.totalRentals} color="purple" />
+        <SummaryCard title="Ongoing" value={stats.ongoing} color="cyan" />
+        <SummaryCard title="Overdue" value={stats.overdue} color="orange" />
+
+        <SummaryCard title="Students" value={stats.totalStudents} color="teal" />
+        <SummaryCard title="Unpaid Fines (₱)" value={stats.unpaidTotal} color="red" />
+        <SummaryCard title="Collected (₱)" value={stats.paidTotal} color="yellow" />
       </div>
 
-      {/* ---------- RENTALS OVERVIEW ---------- */}
+      {/* Recent Transactions */}
       <section className="bg-gray-900 rounded-xl p-6 shadow-lg">
-        <div className="flex flex-col sm:flex-row justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold mb-2 sm:mb-0">Recent Rentals</h2>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="Search by student or item"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="bg-gray-800 rounded px-3 py-2 text-sm focus:outline-none w-48"
-            />
-            <select
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="bg-gray-800 rounded px-3 py-2 text-sm"
-            >
-              <option value="">All</option>
-              <option value="Pending">Pending</option>
-              <option value="Active">Active</option>
-              <option value="Returned">Returned</option>
-            </select>
-          </div>
-        </div>
-
-        <Table
-          headers={["Rental ID", "Student", "Item", "Status", "Due Date", "Action"]}
-          rows={filteredRentals.map((r) => [
-            r.rental_id,
-            r.student_name,
-            r.item_name,
-            <StatusBadge status={r.status} key={r.rental_id} />,
-            r.due_date,
-            <button
-              key={`view-${r.rental_id}`}
-              onClick={() => setSelected(r)}
-              className="text-blue-400 hover:underline"
-            >
-              View
-            </button>,
-          ])}
-        />
-      </section>
-
-      {/* ---------- DAMAGE ASSESSMENTS OVERVIEW ---------- */}
-      <section className="bg-gray-900 rounded-xl p-6 shadow-lg">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold">Recent Damage Assessments</h2>
-          <button className="text-sm text-blue-400 hover:underline">
-            View All →
-          </button>
-        </div>
-
-        <Table
-          headers={["Assessment ID", "Gadget", "Rental ID", "Fine", "Status", "Date Flagged"]}
-          rows={assessments.map((a) => [
-            a.assessment_id,
-            a.gadget_name,
-            a.rental_id,
-            `₱${a.fine_amount}`,
-            <StatusBadge
-              status={a.status === "Paid" ? "Active" : "Pending"}
-              key={a.assessment_id}
-            />,
-            a.date_flagged,
-          ])}
-        />
+        <h2 className="text-xl font-semibold mb-4">Recent Transactions</h2>
+        {recentTransactions.length === 0 ? (
+          <p className="text-gray-400 text-sm">No transactions yet.</p>
+        ) : (
+          <Table
+            headers={["Student", "Type", "Amount", "Status", "Date"]}
+            rows={recentTransactions.map((t) => [
+              t.students?.name || "Unknown",
+              t.transaction_type,
+              `₱${t.amount}`,
+              <StatusBadge status={t.status} key={t.transaction_id} />,
+              new Date(t.transaction_date).toLocaleDateString(),
+            ])}
+          />
+        )}
       </section>
     </div>
-  );
-}
-
-/* ---------- COMPONENTS ---------- */
-function SummaryCard({ title, value, color }) {
-  const colors = {
-    blue: "from-blue-500 to-blue-700",
-    green: "from-green-500 to-green-700",
-    red: "from-red-500 to-red-700",
-    orange: "from-orange-500 to-orange-700",
-    purple: "from-purple-500 to-purple-700",
-  };
-  return (
-    <div
-      className={`bg-gradient-to-br ${colors[color]} rounded-xl p-4 shadow-md flex flex-col justify-between`}
-    >
-      <p className="text-sm opacity-80">{title}</p>
-      <h3 className="text-2xl font-bold">{value}</h3>
-    </div>
-  );
-}
-
-function Table({ headers, rows }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left border-collapse">
-        <thead>
-          <tr className="border-b border-gray-700">
-            {headers.map((h) => (
-              <th key={h} className="py-2 px-3 text-sm font-semibold text-gray-300">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={headers.length} className="text-center py-3 text-gray-500">
-                No data available
-              </td>
-            </tr>
-          ) : (
-            rows.map((r, i) => (
-              <tr key={i} className="border-b border-gray-800 hover:bg-gray-800/40">
-                {r.map((cell, j) => (
-                  <td key={j} className="py-2 px-3 text-sm">
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const color =
-    status === "Active"
-      ? "bg-green-600"
-      : status === "Pending"
-      ? "bg-yellow-600"
-      : "bg-gray-600";
-  return (
-    <span className={`px-2 py-1 rounded text-xs ${color}`}>{status}</span>
   );
 }

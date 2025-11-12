@@ -1,12 +1,14 @@
 // src/pages/Login.jsx
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { supabase } from "../lib/supabaseClient";
 
 export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -14,15 +16,35 @@ export default function Login() {
     if (token) navigate("/dashboard");
   }, [navigate]);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
+    setError("");
+    setLoading(true);
 
-    // Dummy credentials for now
-    if (email === "admin@iot.com" && password === "admin123") {
-      localStorage.setItem("adminToken", "mock_token");
-      navigate("/dashboard");
-    } else {
-      setError("Invalid credentials. Try admin@iot.com / admin123");
+    try {
+      const { data, error } = await supabase
+        .from("admins")
+        .select("admin_id, email, name, password_hash, role")
+        .eq("email", email)
+        .single();
+
+      if (error || !data) {
+        setError("Invalid email or password.");
+      } else if (data.password_hash !== password) {
+        // TEMP: Compare directly; replace with hashing check later
+        setError("Invalid email or password.");
+      } else {
+        // ✅ Save token + redirect
+        localStorage.setItem("adminToken", data.admin_id);
+        localStorage.setItem("adminRole", data.role);
+        localStorage.setItem("adminName", data.name);
+        navigate("/dashboard");
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Unexpected error during login.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -48,6 +70,7 @@ export default function Login() {
               onChange={(e) => setEmail(e.target.value)}
               className="w-full bg-gray-800 rounded px-3 py-2 text-sm focus:outline-none"
               placeholder="Enter your email"
+              required
             />
           </div>
 
@@ -59,14 +82,16 @@ export default function Login() {
               onChange={(e) => setPassword(e.target.value)}
               className="w-full bg-gray-800 rounded px-3 py-2 text-sm focus:outline-none"
               placeholder="Enter your password"
+              required
             />
           </div>
 
           <button
             type="submit"
+            disabled={loading}
             className="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded text-sm font-medium"
           >
-            Log In
+            {loading ? "Logging in..." : "Log In"}
           </button>
         </form>
       </div>

@@ -1,410 +1,421 @@
-import { useState } from "react";
-
-const initialStudents = [
-  {
-    student_id: 1,
-    name: "Alice Garcia",
-    email: "alice.garcia@university.edu",
-    phone_number: "09171234567",
-    major: "Computer Engineering",
-    year: "4th Year",
-    account_state: "Active",
-  },
-  {
-    student_id: 2,
-    name: "Mark Reyes",
-    email: "mark.reyes@university.edu",
-    phone_number: "09234567890",
-    major: "Information Technology",
-    year: "3rd Year",
-    account_state: "Suspended",
-  },
-  {
-    student_id: 3,
-    name: "Sarah Cruz",
-    email: "sarah.cruz@university.edu",
-    phone_number: "09361239876",
-    major: "Electronics Engineering",
-    year: "2nd Year",
-    account_state: "Active",
-  },
-];
+import { useEffect, useState, useMemo } from "react";
+import { supabase } from "../lib/supabaseClient";
+import { SummaryCard, Table, StatusBadge, Modal } from "../components/ui/CommonUI";
 
 export default function Students() {
-  const [students, setStudents] = useState(initialStudents);
-  const [modal, setModal] = useState(null);
+  const [students, setStudents] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [sortBy, setSortBy] = useState("name");
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 8;
 
-  const handleAdd = (student) => {
-    const newStudent = {
-      student_id: students.length + 1,
-      ...student,
-    };
-    setStudents([...students, newStudent]);
-    setModal(null);
-  };
+  useEffect(() => {
+    fetchStudents();
+  }, []);
 
-  const handleEdit = (student) => {
-    setStudents(
-      students.map((s) =>
-        s.student_id === student.student_id ? student : s
-      )
-    );
-    setModal(null);
-  };
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, filterStatus, sortBy]);
 
-  const handleDelete = (id) => {
-    setStudents(students.filter((s) => s.student_id !== id));
-    setModal(null);
-  };
 
-  const handleToggleState = (student) => {
-    setStudents(
-      students.map((s) =>
-        s.student_id === student.student_id
-          ? {
-              ...s,
-              account_state:
-                s.account_state === "Active" ? "Suspended" : "Active",
-            }
-          : s
-      )
-    );
-  };
+  async function fetchStudents() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("students")
+      .select("student_id, name, email, phone_number, major, year, account_status")
+      .order("name");
+
+    if (error) console.error("Error loading students:", error);
+    else setStudents(data || []);
+    setLoading(false);
+  }
+
+  async function handleDelete(student) {
+    if (!confirm(`Are you sure you want to delete ${student.name}?`)) return;
+    const { error } = await supabase.from("students").delete().eq("student_id", student.student_id);
+    if (error) alert("❌ Error deleting student: " + error.message);
+    else {
+      alert("✅ Student deleted successfully!");
+      fetchStudents();
+    }
+  }
+
+  const stats = useMemo(() => {
+    const total = students.length;
+    const active = students.filter((s) => s.account_status === "Active").length;
+    const suspended = students.filter((s) => s.account_status === "Suspended").length;
+    const pending = students.filter((s) => s.account_status === "Pending").length;
+    return { total, active, suspended, pending };
+  }, [students]);
+
+  const filtered = students.filter((s) => {
+    const matchSearch =
+      search === "" ||
+      s.name.toLowerCase().includes(search.toLowerCase()) ||
+      s.email.toLowerCase().includes(search.toLowerCase());
+    const matchStatus = filterStatus ? s.account_status === filterStatus : true;
+    return matchSearch && matchStatus;
+  });
+
+  if (loading)
+    return <div className="text-gray-400 text-center mt-10">Loading students...</div>;
+
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === "year") return (a.year || 0) - (b.year || 0);
+    if (sortBy === "status")
+      return a.account_status.localeCompare(b.account_status, undefined, { sensitivity: "base" });
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+
+  });
+
+  const totalPages = Math.ceil(sorted.length / ITEMS_PER_PAGE);
+  const paginatedStudents = sorted.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
+
+
 
   return (
-    <div className="text-white">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">Students Management</h1>
+    <div className="space-y-8 text-white">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold">Students</h1>
+          <p className="text-sm text-gray-400">Manage student accounts and profiles.</p>
+        </div>
         <button
-          onClick={() => setModal("add")}
-          className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded"
+          onClick={() => setShowAddModal(true)}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
         >
           + Add Student
         </button>
       </div>
 
-      <div className="bg-gray-900 p-4 rounded-lg shadow">
-        <Table
-          headers={[
-            "ID",
-            "Name",
-            "Email",
-            "Major",
-            "Year",
-            "Phone",
-            "Status",
-            "Actions",
-          ]}
-          rows={students.map((s) => [
-            s.student_id,
-            s.name,
-            s.email,
-            s.major,
-            s.year,
-            s.phone_number,
-            <StatusBadge key={s.student_id} status={s.account_state} />,
-            <div key={`btn-${s.student_id}`} className="space-x-2">
-              <Button
-                color="blue"
-                label="View"
-                onClick={() => {
-                  setSelected(s);
-                  setModal("view");
-                }}
-              />
-              <Button
-                color="yellow"
-                label="Edit"
-                onClick={() => {
-                  setSelected(s);
-                  setModal("edit");
-                }}
-              />
-              <Button
-                color={s.account_state === "Active" ? "red" : "green"}
-                label={s.account_state === "Active" ? "Suspend" : "Activate"}
-                onClick={() => handleToggleState(s)}
-              />
-              <Button
-                color="red"
-                label="Delete"
-                onClick={() => {
-                  setSelected(s);
-                  setModal("delete");
-                }}
-              />
-            </div>,
-          ])}
+      {/* Summary */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <SummaryCard title="Total Students" value={stats.total} color="blue" />
+        <SummaryCard title="Active" value={stats.active} color="green" />
+        <SummaryCard title="Pending" value={stats.pending} color="yellow" />
+        <SummaryCard title="Suspended" value={stats.suspended} color="red" />
+      </div>
+
+      {/* Filter + Search */}
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-gray-900 p-4 rounded-lg">
+        <div className="flex gap-3">
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="bg-gray-800 rounded px-3 py-2 text-sm"
+          >
+            <option value="">All Statuses</option>
+            <option value="Active">Active</option>
+            <option value="Pending">Pending</option>
+            <option value="Suspended">Suspended</option>
+          </select>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="bg-gray-800 rounded px-3 py-2 text-sm"
+          >
+            <option value="name">Sort by Name</option>
+            <option value="year">Sort by Year</option>
+            <option value="status">Sort by Status</option>
+          </select>
+        </div>
+
+        <input
+          type="text"
+          placeholder="Search by name or email"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="bg-gray-800 rounded px-3 py-2 text-sm focus:outline-none w-full sm:w-72"
         />
       </div>
 
-      {/* Add Modal */}
-      {modal === "add" && (
-        <StudentModal
-          title="Add New Student"
-          onSave={handleAdd}
-          onClose={() => setModal(null)}
+
+      {/* Students Table */}
+      <section className="bg-gray-900 rounded-xl p-6 shadow-lg">
+        <Table
+          headers={["Name", "Email", "Phone", "Major", "Year", "Status", "Actions"]}
+          rows={paginatedStudents.map((s) => [
+            s.name,
+            s.email,
+            s.phone_number || "—",
+            s.major || "—",
+            s.year || "—",
+            <StatusBadge key={s.student_id} status={s.account_status} />,
+            <div key={`actions-${s.student_id}`} className="flex gap-3">
+              <button
+                onClick={() => setSelected(s)}
+                className="text-blue-400 hover:underline"
+              >
+                View
+              </button>
+              <button
+                onClick={() => setEditTarget(s)}
+                className="text-yellow-400 hover:underline"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => handleDelete(s)}
+                className="text-red-400 hover:underline"
+              >
+                Delete
+              </button>
+            </div>,
+          ])}
         />
-      )}
 
-      {/* Edit Modal */}
-      {modal === "edit" && selected && (
-        <StudentModal
-          title="Edit Student"
-          student={selected}
-          onSave={handleEdit}
-          onClose={() => setModal(null)}
-        />
-      )}
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex justify-center gap-2 mt-4">
+            <button
+              onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1 bg-gray-700 rounded disabled:opacity-50"
+            >
+              Prev
+            </button>
+            <span className="text-gray-400 text-sm">
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1 bg-gray-700 rounded disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        )}
 
-      {/* Delete Confirmation */}
-      {modal === "delete" && selected && (
-        <Modal title="Delete Student" onClose={() => setModal(null)}>
-          <p>
-            Are you sure you want to delete{" "}
-            <b>{selected.name}</b> from the system?
-          </p>
-          <ActionRow
-            onCancel={() => setModal(null)}
-            onConfirm={() => handleDelete(selected.student_id)}
-            confirmLabel="Delete"
-            confirmColor="red"
-          />
-        </Modal>
-      )}
+      </section>
 
-      {/* View Student Details */}
-      {modal === "view" && selected && (
-        <Modal title="Student Details" onClose={() => setModal(null)}>
+      {/* View Modal */}
+      {selected && (
+        <Modal title={`Details for ${selected.name}`} onClose={() => setSelected(null)}>
           <div className="space-y-2 text-sm">
-            <p><b>ID:</b> {selected.student_id}</p>
             <p><b>Name:</b> {selected.name}</p>
             <p><b>Email:</b> {selected.email}</p>
             <p><b>Phone:</b> {selected.phone_number}</p>
             <p><b>Major:</b> {selected.major}</p>
             <p><b>Year:</b> {selected.year}</p>
-            <p><b>Status:</b> {selected.account_state}</p>
+            <p><b>Status:</b> {selected.account_status}</p>
           </div>
 
-          <div className="mt-4">
-            <p className="text-gray-400 text-sm mb-2">
-              (Simulated) Recent Rentals:
-            </p>
-            <ul className="bg-gray-800 rounded p-2 text-xs text-gray-300 space-y-1">
-              <li>• Rental #1021 - Arduino Uno - Returned</li>
-              <li>• Rental #1045 - ESP32 Kit - Active</li>
-              <li>• Rental #1060 - Sensor Kit - Overdue</li>
-            </ul>
-          </div>
-
-          <div className="mt-3">
-            <p className="text-gray-400 text-sm mb-2">
-              (Simulated) Transactions:
-            </p>
-            <ul className="bg-gray-800 rounded p-2 text-xs text-gray-300 space-y-1">
-              <li>• ₱50.00 - Overdue Fee (Paid)</li>
-              <li>• ₱250.00 - Damage Fee (Unpaid)</li>
-            </ul>
-          </div>
+          <hr className="my-3 border-gray-700" />
+          <StudentRentalsModal student={selected} />
         </Modal>
+      )}
+
+
+
+      {/* Add/Edit Modal */}
+      {(showAddModal || editTarget) && (
+        <AddOrEditStudentModal
+          mode={editTarget ? "edit" : "add"}
+          existing={editTarget}
+          onClose={() => {
+            setShowAddModal(false);
+            setEditTarget(null);
+          }}
+          onSaved={fetchStudents}
+        />
       )}
     </div>
   );
 }
 
-/* ---------- Shared UI Components ---------- */
+/* ---------- Student Rentals Modal ---------- */
+function StudentRentalsModal({ student, onClose }) {
+  const [rentals, setRentals] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-function Table({ headers, rows }) {
+  useEffect(() => {
+    fetchStudentRentals();
+  }, []);
+
+  async function fetchStudentRentals() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("rentals")
+      .select(`
+        rental_id,
+        rental_date,
+        due_date,
+        rental_status,
+        rental_items ( quantity )
+      `)
+      .eq("student_id", student.student_id)
+      .order("rental_date", { ascending: false });
+
+    if (error) console.error("Error fetching student rentals:", error);
+    else setRentals(data || []);
+    setLoading(false);
+  }
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left border-collapse">
-        <thead>
-          <tr className="border-b border-gray-700">
-            {headers.map((h) => (
-              <th key={h} className="py-2 px-3 text-sm font-semibold text-gray-300">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td
-                colSpan={headers.length}
-                className="text-center py-3 text-gray-500"
+    <Modal title={`Rentals for ${student.name}`} onClose={onClose}>
+      {loading ? (
+        <div className="text-gray-400 text-sm">Loading rentals...</div>
+      ) : rentals.length === 0 ? (
+        <div className="text-gray-400 text-sm">No rentals found.</div>
+      ) : (
+        <div className="space-y-3 text-sm">
+          {rentals.map((r) => (
+            <div
+              key={r.rental_id}
+              className="bg-gray-800 p-3 rounded-lg flex justify-between items-center"
+            >
+              <div>
+                <p><b>ID:</b> {r.rental_id}</p>
+                <p><b>Status:</b> <StatusBadge status={r.rental_status} /></p>
+                <p>
+                  <b>Rented:</b> {new Date(r.rental_date).toLocaleDateString()}
+                </p>
+                <p>
+                  <b>Due:</b> {new Date(r.due_date).toLocaleDateString()}
+                </p>
+                <p>
+                  <b>Items:</b> {r.rental_items?.length || 0}
+                </p>
+              </div>
+              <button
+                className="text-blue-400 hover:underline"
+                onClick={() => alert("This could open full rental details later")}
               >
-                No students found
-              </td>
-            </tr>
-          ) : (
-            rows.map((r, i) => (
-              <tr key={i} className="border-b border-gray-800 hover:bg-gray-800">
-                {r.map((cell, j) => (
-                  <td key={j} className="py-2 px-3 text-sm">
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
+                View Details
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
   );
 }
 
-function Button({ color, label, onClick }) {
-  const colors = {
-    blue: "bg-blue-600 hover:bg-blue-700",
-    yellow: "bg-yellow-500 hover:bg-yellow-600 text-black",
-    red: "bg-red-600 hover:bg-red-700",
-    green: "bg-green-600 hover:bg-green-700",
-  };
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3 py-1 rounded text-sm ${colors[color]}`}
-    >
-      {label}
-    </button>
-  );
-}
+/* ---------- Add/Edit Student Modal ---------- */
+function AddOrEditStudentModal({ mode = "add", existing = {}, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: existing.name || "",
+    email: existing.email || "",
+    phone_number: existing.phone_number || "",
+    major: existing.major || "",
+    year: existing.year || "",
+    account_status: existing.account_status || "Active",
+  });
+  const [loading, setLoading] = useState(false);
 
-function Modal({ title, children, onClose }) {
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="bg-gray-900 p-6 rounded-lg shadow-lg w-full max-w-md relative">
-        <h3 className="text-xl font-semibold mb-4">{title}</h3>
-        {children}
-        <button
-          onClick={onClose}
-          className="absolute top-2 right-2 text-gray-400 hover:text-white"
-        >
-          ✕
-        </button>
-      </div>
-    </div>
-  );
-}
+  async function handleSubmit(e) {
+    e.preventDefault();
 
-function ActionRow({ onCancel, onConfirm, confirmLabel, confirmColor }) {
-  const colors = {
-    red: "bg-red-600 hover:bg-red-700",
-    green: "bg-green-600 hover:bg-green-700",
-  };
-  return (
-    <div className="mt-4 flex justify-end gap-2">
-      <button onClick={onCancel} className="px-3 py-1 bg-gray-700 rounded">
-        Cancel
-      </button>
-      <button
-        onClick={onConfirm}
-        className={`px-3 py-1 rounded ${colors[confirmColor]}`}
-      >
-        {confirmLabel}
-      </button>
-    </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const color =
-    status === "Active"
-      ? "bg-green-600"
-      : status === "Suspended"
-      ? "bg-red-600"
-      : "bg-yellow-600";
-  return (
-    <span className={`px-2 py-1 rounded text-xs ${color}`}>{status}</span>
-  );
-}
-
-function StudentModal({ title, student, onSave, onClose }) {
-  const [form, setForm] = useState(
-    student || {
-      name: "",
-      email: "",
-      phone_number: "",
-      major: "",
-      year: "",
-      account_state: "Active",
-    }
-  );
-
-  const handleChange = (field, value) => {
-    setForm({ ...form, [field]: value });
-  };
-
-  const handleSubmit = () => {
     if (!form.name || !form.email) {
-      alert("Name and email are required.");
+      alert("Please fill in all required fields.");
       return;
     }
-    onSave(form);
-  };
+
+    setLoading(true);
+    const payload = {
+      name: form.name,
+      email: form.email,
+      phone_number: form.phone_number,
+      major: form.major,
+      year: Number(form.year),
+      account_status: form.account_status,
+    };
+
+    const query =
+      mode === "add"
+        ? supabase.from("students").insert([payload])
+        : supabase.from("students").update(payload).eq("student_id", existing.student_id);
+
+    const { error } = await query;
+    setLoading(false);
+
+    if (error) {
+      alert("❌ Error saving student: " + error.message);
+      console.error(error);
+    } else {
+      alert(`✅ Student ${mode === "add" ? "added" : "updated"} successfully!`);
+      onSaved?.();
+      onClose();
+    }
+  }
 
   return (
-    <Modal title={title} onClose={onClose}>
-      <div className="space-y-3">
-        <div>
-          <label className="text-sm text-gray-400">Name:</label>
-          <input
-            value={form.name}
-            onChange={(e) => handleChange("name", e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
+    <Modal
+      title={mode === "add" ? "Add New Student" : "Edit Student"}
+      onClose={onClose}
+    >
+      <form onSubmit={handleSubmit} className="space-y-3 text-sm">
+        <Input label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+        <Input label="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+        <Input label="Phone Number" value={form.phone_number} onChange={(e) => setForm({ ...form, phone_number: e.target.value })} />
+        <Input label="Major" value={form.major} onChange={(e) => setForm({ ...form, major: e.target.value })} />
+        <Input
+          label="Year"
+          type="number"
+          value={form.year}
+          onChange={(e) => setForm({ ...form, year: e.target.value })}
+        />
 
-        <div>
-          <label className="text-sm text-gray-400">Email:</label>
-          <input
-            value={form.email}
-            onChange={(e) => handleChange("email", e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Phone Number:</label>
-          <input
-            value={form.phone_number}
-            onChange={(e) => handleChange("phone_number", e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Major:</label>
-          <input
-            value={form.major}
-            onChange={(e) => handleChange("major", e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-400">Year:</label>
-          <input
-            value={form.year}
-            onChange={(e) => handleChange("year", e.target.value)}
-            className="mt-1 w-full bg-gray-800 rounded px-3 py-2 text-sm"
-          />
-        </div>
+        <Select
+          label="Account Status"
+          value={form.account_status}
+          onChange={(e) => setForm({ ...form, account_status: e.target.value })}
+          options={["Active", "Pending", "Suspended"]}
+        />
 
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1 bg-gray-700 rounded">
+          <button
+            type="button"
+            onClick={onClose}
+            className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded"
+          >
             Cancel
           </button>
           <button
-            onClick={handleSubmit}
-            className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded"
+            type="submit"
+            disabled={loading}
+            className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded"
           >
-            Save Student
+            {loading ? "Saving..." : mode === "add" ? "Add" : "Update"}
           </button>
         </div>
-      </div>
+      </form>
     </Modal>
+  );
+}
+
+/* ---------- Small Input Components ---------- */
+function Input({ label, ...props }) {
+  return (
+    <div>
+      <label className="block text-gray-400 mb-1">{label}</label>
+      <input {...props} className="w-full bg-gray-800 rounded px-3 py-2" />
+    </div>
+  );
+}
+
+function Select({ label, options, ...props }) {
+  return (
+    <div>
+      <label className="block text-gray-400 mb-1">{label}</label>
+      <select {...props} className="w-full bg-gray-800 rounded px-3 py-2">
+        {options.map((opt) => (
+          <option key={opt}>{opt}</option>
+        ))}
+      </select>
+    </div>
   );
 }

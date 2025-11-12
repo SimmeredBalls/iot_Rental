@@ -1,103 +1,103 @@
-import { useState } from "react";
+// src/pages/Transactions.jsx
+import { useState, useEffect, useMemo } from "react";
+import { supabase } from "../lib/supabaseClient";
+import { SummaryCard, Table, StatusBadge, Modal } from "../components/ui/CommonUI";
 
 export default function Transactions() {
-  // --- Mock Transaction Data (Replace with Supabase fetch later) ---
-  const [transactions, setTransactions] = useState([
-    {
-      id: 1,
-      rental_id: 1001,
-      student_name: "John Doe",
-      type: "Damage Fine",
-      amount: 250,
-      status: "Paid",
-      date: "2025-11-01",
-      notes: "Broken Arduino pin",
-    },
-    {
-      id: 2,
-      rental_id: 1003,
-      student_name: "Mike Johnson",
-      type: "Lost Fine",
-      amount: 500,
-      status: "Unpaid",
-      date: "2025-11-03",
-      notes: "Lost multimeter",
-    },
-    {
-      id: 3,
-      rental_id: 1004,
-      student_name: "Lisa Brown",
-      type: "Late Fine",
-      amount: 100,
-      status: "Paid",
-      date: "2025-10-29",
-      notes: "Returned 2 days late",
-    },
-    {
-      id: 4,
-      rental_id: 1005,
-      student_name: "Alex Lee",
-      type: "Damage Fine",
-      amount: 300,
-      status: "Unpaid",
-      date: "2025-11-02",
-      notes: "Cracked case on ESP32",
-    },
-  ]);
-
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
 
-  // --- Stats for Summary Cards ---
-  const totalFines = transactions.length;
-  const totalPaid = transactions.filter((t) => t.status === "Paid").length;
-  const totalUnpaid = transactions.filter((t) => t.status === "Unpaid").length;
-  const totalCollected = transactions
-    .filter((t) => t.status === "Paid")
-    .reduce((sum, t) => sum + t.amount, 0);
+  useEffect(() => {
+    fetchTransactions();
+  }, []);
 
-  const stats = [
-    { title: "Total Fines", value: totalFines },
-    { title: "Paid", value: totalPaid },
-    { title: "Unpaid", value: totalUnpaid },
-    { title: "Collected (₱)", value: totalCollected },
-  ];
+  // ✅ Fetch from Supabase
+  async function fetchTransactions() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("transactions")
+      .select(`
+        transaction_id,
+        transaction_type,
+        amount,
+        status,
+        transaction_date,
+        payment_method,
+        payment_reference_id,
+        students (name, email),
+        rentals (rental_id)
+      `)
+      .order("transaction_date", { ascending: false });
 
-  // --- Filtering & Search ---
-  const filteredTransactions = transactions.filter((t) => {
-    const matchFilter = filter ? t.status === filter : true;
-    const matchSearch = search
-      ? t.student_name.toLowerCase().includes(search.toLowerCase()) ||
-        t.type.toLowerCase().includes(search.toLowerCase())
-      : true;
-    return matchFilter && matchSearch;
-  });
+    if (error) console.error("Error fetching transactions:", error);
+    else setTransactions(data || []);
+    setLoading(false);
+  }
 
-  // --- Mark Payment Handler ---
-  const handleMarkPaid = (id) => {
-    setTransactions((prev) =>
-      prev.map((t) =>
-        t.id === id ? { ...t, status: "Paid" } : t
-      )
-    );
-  };
+  // ✅ Mark as Paid
+  async function handleMarkPaid(transaction_id) {
+    const confirmPay = confirm("Mark this transaction as paid?");
+    if (!confirmPay) return;
+
+    const { error } = await supabase
+      .from("transactions")
+      .update({ status: "Paid" })
+      .eq("transaction_id", transaction_id);
+
+    if (error) {
+      console.error("Error updating payment status:", error);
+      alert("Failed to mark as paid.");
+      return;
+    }
+
+    alert("✅ Transaction marked as paid!");
+    fetchTransactions();
+  }
+
+  // ✅ Derived Stats
+  const stats = useMemo(() => {
+    const total = transactions.length;
+    const paid = transactions.filter((t) => t.status === "Paid").length;
+    const unpaid = transactions.filter((t) => t.status === "Unpaid").length;
+    const collected = transactions
+      .filter((t) => t.status === "Paid")
+      .reduce((sum, t) => sum + (t.amount || 0), 0);
+    return { total, paid, unpaid, collected };
+  }, [transactions]);
+
+  // ✅ Filters + Search
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter((t) => {
+      const matchFilter = filter ? t.status === filter : true;
+      const matchSearch = search
+        ? t.students?.name?.toLowerCase().includes(search.toLowerCase()) ||
+          t.transaction_type?.toLowerCase().includes(search.toLowerCase())
+        : true;
+      return matchFilter && matchSearch;
+    });
+  }, [transactions, filter, search]);
+
+  if (loading) return <div className="text-gray-400">Loading transactions...</div>;
 
   return (
     <div className="space-y-8 text-white">
       {/* ---------- HEADER ---------- */}
-      <div className="flex justify-between items-center">
+      <div>
         <h1 className="text-3xl font-bold">Transactions</h1>
         <p className="text-sm text-gray-400">
-          Manage all fines and payment records.
+          View and manage all system-generated fines and payments.
         </p>
       </div>
 
-      {/* ---------- STATS ---------- */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {stats.map((s) => (
-          <SummaryCard key={s.title} title={s.title} value={s.value} />
-        ))}
+      {/* ---------- SUMMARY CARDS ---------- */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <SummaryCard title="Total Transactions" value={stats.total} color="blue" />
+        <SummaryCard title="Paid" value={stats.paid} color="green" />
+        <SummaryCard title="Unpaid" value={stats.unpaid} color="red" />
+        <SummaryCard title="Collected (₱)" value={stats.collected} color="yellow" />
       </div>
 
       {/* ---------- FILTERS ---------- */}
@@ -122,21 +122,29 @@ export default function Transactions() {
         </div>
       </div>
 
-      {/* ---------- TRANSACTIONS TABLE ---------- */}
+      {/* ---------- TABLE ---------- */}
       <section className="bg-gray-900 rounded-xl p-6 shadow-lg">
         <Table
-          headers={["ID", "Student", "Type", "Amount", "Status", "Date", "Actions"]}
+          headers={[
+            "Transaction ID",
+            "Student",
+            "Type",
+            "Amount",
+            "Status",
+            "Date",
+            "Actions",
+          ]}
           rows={filteredTransactions.map((t) => [
-            t.id,
-            t.student_name,
-            t.type,
+            t.transaction_id,
+            t.students?.name || "Unknown",
+            t.transaction_type,
             `₱${t.amount}`,
-            <StatusBadge status={t.status} key={t.id} />,
-            t.date,
-            <div key={t.id} className="flex gap-2">
+            <StatusBadge status={t.status} key={t.transaction_id} />,
+            new Date(t.transaction_date).toLocaleDateString(),
+            <div key={`actions-${t.transaction_id}`} className="flex gap-2">
               {t.status === "Unpaid" && (
                 <button
-                  onClick={() => handleMarkPaid(t.id)}
+                  onClick={() => handleMarkPaid(t.transaction_id)}
                   className="text-green-400 hover:underline"
                 >
                   Mark Paid
@@ -153,108 +161,39 @@ export default function Transactions() {
         />
       </section>
 
-      {/* ---------- TRANSACTION DETAILS MODAL ---------- */}
+      {/* ---------- MODAL ---------- */}
       {selected && (
-        <Modal title={`Transaction #${selected.id}`} onClose={() => setSelected(null)}>
+        <Modal
+          title={`Transaction #${selected.transaction_id}`}
+          onClose={() => setSelected(null)}
+        >
           <div className="space-y-2 text-sm">
-            <p><b>Student:</b> {selected.student_name}</p>
-            <p><b>Rental ID:</b> {selected.rental_id}</p>
-            <p><b>Type:</b> {selected.type}</p>
+            <p><b>Student:</b> {selected.students?.name}</p>
+            <p><b>Email:</b> {selected.students?.email}</p>
+            <p><b>Rental ID:</b> {selected.rentals?.rental_id || "N/A"}</p>
+            <p><b>Type:</b> {selected.transaction_type}</p>
             <p><b>Amount:</b> ₱{selected.amount}</p>
             <p><b>Status:</b> <StatusBadge status={selected.status} /></p>
-            <p><b>Date:</b> {selected.date}</p>
-            <p><b>Notes:</b> {selected.notes}</p>
-
-            {selected.status === "Unpaid" && (
-              <div className="flex justify-end mt-4">
-                <button
-                  onClick={() => {
-                    handleMarkPaid(selected.id);
-                    setSelected(null);
-                  }}
-                  className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm"
-                >
-                  Mark as Paid
-                </button>
-              </div>
-            )}
+            <p><b>Date:</b> {new Date(selected.transaction_date).toLocaleString()}</p>
+            <p><b>Payment Method:</b> {selected.payment_method || "N/A"}</p>
+            <p><b>Reference ID:</b> {selected.payment_reference_id || "—"}</p>
           </div>
+
+          {selected.status === "Unpaid" && (
+            <div className="flex justify-end mt-4">
+              <button
+                onClick={() => {
+                  handleMarkPaid(selected.transaction_id);
+                  setSelected(null);
+                }}
+                className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm"
+              >
+                Mark as Paid
+              </button>
+            </div>
+          )}
         </Modal>
       )}
-    </div>
-  );
-}
-
-/* ---------- UI COMPONENTS ---------- */
-function SummaryCard({ title, value }) {
-  return (
-    <div className="bg-gray-800 rounded-xl p-4 shadow-md text-center">
-      <p className="text-sm text-gray-400">{title}</p>
-      <h3 className="text-2xl font-bold">{value}</h3>
-    </div>
-  );
-}
-
-function Table({ headers, rows }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left border-collapse">
-        <thead>
-          <tr className="border-b border-gray-700">
-            {headers.map((h) => (
-              <th key={h} className="py-2 px-3 text-sm font-semibold text-gray-300">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={headers.length} className="text-center py-3 text-gray-500">
-                No transactions found
-              </td>
-            </tr>
-          ) : (
-            rows.map((r, i) => (
-              <tr key={i} className="border-b border-gray-800 hover:bg-gray-800/40">
-                {r.map((cell, j) => (
-                  <td key={j} className="py-2 px-3 text-sm">
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const color =
-    status === "Paid"
-      ? "bg-green-600"
-      : status === "Unpaid"
-      ? "bg-red-600"
-      : "bg-gray-600";
-  return <span className={`px-2 py-1 rounded text-xs ${color}`}>{status}</span>;
-}
-
-function Modal({ title, children, onClose }) {
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="bg-gray-900 p-6 rounded-lg shadow-lg w-full max-w-md relative">
-        <h3 className="text-xl font-semibold mb-4">{title}</h3>
-        {children}
-        <button
-          onClick={onClose}
-          className="absolute top-2 right-2 text-gray-400 hover:text-white"
-        >
-          ✕
-        </button>
-      </div>
     </div>
   );
 }
